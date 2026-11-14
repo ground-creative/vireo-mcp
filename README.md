@@ -47,6 +47,13 @@ that on your `PATH` so hosts can start it by name:
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
+Check that it runs before wiring it into a host:
+
+```bash
+command -v vireo-mcp      # where the shell finds it
+vireo-mcp -version        # e.g. vireo-mcp 0.5.0
+```
+
 That is the whole install: one static binary, no data files of its own. From
 source, if you prefer:
 
@@ -111,9 +118,42 @@ Restart Claude Desktop. The `vireo` server appears in the tools menu.
 Any other MCP host: point it at the binary with the standard stdio transport —
 one JSON-RPC message per line on stdin, one per line on stdout.
 
-If the host does not inherit your shell `PATH` (common for desktop apps launched
-from a dock), give it the absolute path instead: `"command": "/home/you/go/bin/vireo-mcp"`,
-as printed by `go env GOPATH`.
+### If the host cannot start it
+
+`"command": "vireo-mcp"` only works when the host inherits a `PATH` that
+contains `$(go env GOPATH)/bin`. Desktop hosts usually do not: Claude Desktop,
+and anything launched from a dock or an app bundle, starts with a minimal `PATH`
+such as `/usr/bin:/bin:/usr/sbin:/sbin`. The binary is invisible to them even
+though your terminal finds it fine, and the host reports the server as failed —
+`spawn vireo-mcp ENOENT`, `MCP server "vireo" failed to start`, or
+`command not found` in its log.
+
+Give it the absolute path instead:
+
+```json
+{
+  "servers": {
+    "vireo": {
+      "type": "stdio",
+      "command": "/home/you/go/bin/vireo-mcp"
+    }
+  }
+}
+```
+
+Get the exact path to paste:
+
+```bash
+go env GOBIN     # if set, the binary is $GOBIN/vireo-mcp
+go env GOPATH    # otherwise it is $GOPATH/bin/vireo-mcp
+```
+
+On Windows that is `%USERPROFILE%\go\bin\vireo-mcp.exe`.
+
+Two things mislead people here: `which vireo-mcp` succeeding in your terminal
+says nothing about a host launched from a GUI, because the two do not share an
+environment; and adding the directory to `~/.bashrc` or `~/.zshrc` does not help
+either, since a GUI host never reads it. The absolute path always works.
 
 ### Over HTTP
 
@@ -314,7 +354,7 @@ _vireo._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
 | `-name`        | `default` | label for this installation (display only; the id is generated) |
 | `-http-addr`   | —         | serve MCP over Streamable HTTP on this address instead of stdio |
 | `-insecure`    | `true`    | skip daemon TLS verification (development only)                 |
-| `-timeout`     | `15s`     | per-request timeout toward the daemon                           |
+| `-timeout`     | `120s`    | per-request timeout toward the daemon                           |
 | `-issue-token` | —         | mint an authorization token for the HTTP transport and print it |
 | `-list-tokens` | —         | print the registered tokens and their client ids                |
 | `-log`         | —         | write a JSON-RPC trace to this file, or `-` for stderr          |
