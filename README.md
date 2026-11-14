@@ -34,27 +34,6 @@ When an agent has a `start_message` in its configuration, `new_conversation`
 returns that greeting as the text of the tool result: the conversation opens
 with the agent's own words instead of a bare confirmation.
 
-### A real turn
-
-Against the ZIWA-backed endpoint (`ziwa-dev`, two agents whose answers come from
-a model), `send_message` returns the model's answer, not a canned reply:
-
-```
-send_message { message: "hello" }
-
-Hello! Thank you for contacting ZIWA Solutions.
-
-How can I help you today? If you are looking to improve your operations,
-automate workflows, or explore our AI and engineering solutions, feel free to
-let me know what you need.
-```
-
-The same text arrives as `session.summary`, so it is what `conversations` lists
-as the title the next time the assistant looks for prior chats. A long turn also
-streams progress: vireo forwards the model's partial output as MCP progress
-notifications while the backend is still working, so the host is not silent for
-the whole call.
-
 ## Install
 
 ```bash
