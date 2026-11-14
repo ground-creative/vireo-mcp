@@ -87,6 +87,10 @@ cd vireo-mcp
 go build -o vireo-mcp .
 ```
 
+Tagged releases with prebuilt binaries for Linux and macOS (amd64, arm64) are
+intended so you can skip the Go toolchain — nothing is published yet, so install
+with `go install` or build from source for now.
+
 Only the bridge is installed per AI host. The daemon side (`vireo`) is separate
 and is always built from source, because it needs `config/`, `certs/` and
 `sessions/` next to the binary.
