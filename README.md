@@ -36,15 +36,27 @@ with the agent's own words instead of a bare confirmation.
 
 ## Live demo
 
-[ziwa.ai](https://ziwa.ai) runs a vireo daemon, discovered through
-`_vireo._tcp.ziwa.ai` — one host name, no per-vendor configuration:
+The live endpoint is [ziwa.ai](https://ziwa.ai), found through
+`_vireo._tcp.ziwa.ai`. The flow, against an example business:
 
 ```
-connect ziwa.ai
-  connected to "…" at vireo.ziwa.ai:7778 via SRV record
+connect acme-plumbing.example
+  connected to "acme-plumbing" at agent.acme-plumbing.example:7777 via SRV record
 
-  <the agents that endpoint exposes right now>
+  bookings — Book a visit, change or cancel an appointment
+  support  — Questions about service, coverage and pricing
+
+new_conversation support
+  What can I help you with today?
+
+send_message "do you cover the north side?"
+  Yes — everything north of the river, with same-day slots before 11am.
+   [open · turn 1] "coverage north side"
 ```
+
+That is the whole setup: one host name, no vendor-specific tool. The next
+`send_message` continues the same conversation, and `conversations` lists it by
+its summary next time.
 
 ## Install
 
