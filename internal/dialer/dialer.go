@@ -30,6 +30,11 @@ type Options struct {
 	Name     string        // human label, display only
 	Insecure bool          // skip TLS verification (dev)
 	Timeout  time.Duration // per-request timeout
+
+	// OnPartial receives the progress lines an agent sends mid-turn. In an MCP
+	// host these become notifications/progress, which is the only way a tool
+	// call can say "hold on" without returning.
+	OnPartial func(text string)
 }
 
 // Dialer is the tool engine. It is safe to drive sequentially, the way MCP
@@ -304,6 +309,11 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 		Name:     d.displayName(),
 		Timeout:  d.opts.Timeout,
 		Insecure: d.opts.Insecure,
+		OnPartial: func(p protocol.PartialPayload) {
+			if d.opts.OnPartial != nil && strings.TrimSpace(p.Text) != "" {
+				d.opts.OnPartial(strings.TrimSpace(p.Text))
+			}
+		},
 	})
 	if err != nil {
 		return fmt.Sprintf("connect to %s failed: %v", addr, err), false

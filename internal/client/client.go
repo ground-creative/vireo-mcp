@@ -41,6 +41,10 @@ type Options struct {
 	Timeout  time.Duration
 	Insecure bool // skip TLS verification (dev only)
 	UseQUIC  bool
+
+	// OnPartial receives progress the agent sends while it is still working
+	// ("hold on…"). It is called from the reading goroutine and may be nil.
+	OnPartial func(protocol.PartialPayload)
 }
 
 // Client talks to one vireo daemon. The manifest is captured at Connect and
@@ -132,7 +136,7 @@ func Connect(ctx context.Context, opts Options) (*Client, error) {
 		return nil, fmt.Errorf("client: a client id is required")
 	}
 	if opts.Timeout <= 0 {
-		opts.Timeout = 15 * time.Second
+		opts.Timeout = 120 * time.Second
 	}
 	c := &Client{opts: opts}
 	if err := c.open(ctx); err != nil {
@@ -394,6 +398,14 @@ func (c *Client) roundTrip(typ uint8, req any, onDone func(data []byte, end *pro
 		switch f.Type {
 		case protocol.TypeData:
 			data = append(data, f.Payload...)
+		case protocol.TypePartial:
+			// Progress inside the turn: surface it, but keep it out of the reply.
+			if c.opts.OnPartial != nil {
+				var p protocol.PartialPayload
+				if err := json.Unmarshal(f.Payload, &p); err == nil {
+					c.opts.OnPartial(p)
+				}
+			}
 		case protocol.TypeEnd:
 			var ep protocol.EndPayload
 			_ = json.Unmarshal(f.Payload, &ep)

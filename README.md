@@ -226,6 +226,26 @@ vireo-mcp -list-tokens          # what is registered
 Tokens live in `$XDG_CONFIG_HOME/vireo-mcp/<label>.callers.json`, so a token
 keeps working after the process restarts.
 
+## Progress while a turn runs
+
+An agent that knows a turn will be slow can report progress instead of leaving
+the host staring at a spinner. When the daemon relays such a line, `send_message`
+emits an MCP notification over stdio:
+
+```json
+{"jsonrpc":"2.0","method":"notifications/progress",
+ "params":{"progressToken":"tok","progress":1,"message":"fetching your site…"}}
+```
+
+The token comes from `params._meta.progressToken` in the `tools/call` request; a
+host that does not send one gets no notifications, and the call simply returns
+when the answer is ready. The final tool result is unchanged, and the turn count
+still increments once — progress is not a turn. If the backend goes quiet for
+more than ten seconds, a generic "still working…" line keeps the call alive.
+
+Over HTTP there is no notification channel: one POST yields one response, so
+progress is silent there.
+
 ## HTTP transport
 
 `-http-addr` serves MCP over Streamable HTTP instead of stdio. Useful for

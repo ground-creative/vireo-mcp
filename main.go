@@ -56,7 +56,7 @@ var (
 func main() {
 	label := flag.String("name", "default", "label for this installation, e.g. claude-desktop (display only; the id is generated)")
 	insecure := flag.Bool("insecure", true, "skip daemon TLS verification (dev only)")
-	timeout := flag.Duration("timeout", 15*time.Second, "per-request timeout")
+	timeout := flag.Duration("timeout", 120*time.Second, "per-request timeout toward the daemon")
 	httpAddr := flag.String("http-addr", "", "serve MCP over Streamable HTTP on this address instead of stdio, e.g. 127.0.0.1:8081")
 	issueToken := flag.Bool("issue-token", false, "mint a new authorization token for the HTTP transport and print it")
 	listTokens := flag.Bool("list-tokens", false, "print the registered authorization tokens and their client ids")
@@ -106,13 +106,18 @@ func main() {
 	}
 
 	s := &server{
-		baseID: clientID,
-		name:   *label,
-		newDialer: func(id string) *dialer.Dialer {
-			return dialer.New(dialer.Options{ClientID: id, Name: *label, Insecure: *insecure, Timeout: *timeout})
-		},
+		baseID:    clientID,
+		name:      *label,
 		instances: map[string]*instance{},
 		callers:   registry,
+	}
+	s.newDialer = func(id string) *dialer.Dialer {
+		return dialer.New(dialer.Options{
+			ClientID: id, Name: *label, Insecure: *insecure, Timeout: *timeout,
+			// Mid-turn progress becomes notifications/progress, so a host can
+			// show "hold on" while a tool call is still running.
+			OnPartial: s.notifyProgress,
+		})
 	}
 	s.d = s.newDialer(clientID)
 
@@ -160,6 +165,8 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "%s: MCP over stdio — JSON-RPC lines on stdin, replies on stdout\n", serverName)
+	// Only stdio can carry notifications while a tool call is still running.
+	s.progressOut = os.Stdout
 	s.serveStdio()
 }
 
@@ -185,6 +192,13 @@ type server struct {
 	trace   io.Writer
 	traceMu sync.Mutex
 	events  []event
+
+	// progressOut is where notifications/progress go: stdout over stdio, nil
+	// over HTTP, where one POST has no stream to notify on.
+	progressOut   io.Writer
+	progressMu    sync.Mutex
+	progressToken string
+	progressSeq   int
 }
 
 // instance is the live state for one caller: a connection and its current
@@ -617,6 +631,11 @@ func (s *server) handleToolsCall(d *dialer.Dialer, msg rpcMessage) string {
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
+		// Hosts that want progress send a token here; without one there is
+		// nowhere to report to, so the call simply blocks.
+		Meta struct {
+			ProgressToken json.RawMessage `json:"progressToken"`
+		} `json:"_meta"`
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil || params.Name == "" {
 		return respondError(msg.ID, -32602, "tools/call needs {name, arguments}")
@@ -630,12 +649,81 @@ func (s *server) handleToolsCall(d *dialer.Dialer, msg rpcMessage) string {
 	if params.Arguments == nil {
 		params.Arguments = json.RawMessage("{}")
 	}
+	s.beginProgress(params.Meta.ProgressToken)
+	done := make(chan struct{})
+	go s.keepAlive(done)
 	text, ok := d.Handle(context.Background(), params.Name, params.Arguments)
+	close(done)
+	s.endProgress()
+
 	result := map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": !ok,
 	}
 	return respond(msg.ID, result)
+}
+
+// beginProgress starts a turn: the token decides whether anything is
+// reported, and the counter restarts per tool call.
+func (s *server) beginProgress(token json.RawMessage) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progressToken = string(token)
+	s.progressSeq = 0
+}
+
+func (s *server) endProgress() {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progressToken = ""
+}
+
+// notifyProgress reports one progress line to the host. No token means the host
+// did not ask for progress; the turn still completes, it is just silent.
+func (s *server) notifyProgress(text string) {
+	text = strings.TrimSpace(text)
+	if s.progressOut == nil || text == "" {
+		return
+	}
+	s.progressMu.Lock()
+	token := s.progressToken
+	s.progressSeq++
+	seq := s.progressSeq
+	s.progressMu.Unlock()
+	if token == "" {
+		return
+	}
+
+	msg := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/progress",
+		"params": map[string]any{
+			"progressToken": json.RawMessage(token),
+			"progress":      seq,
+			"message":       text,
+		},
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	s.record("->", string(b))
+	fmt.Fprintln(s.progressOut, string(b))
+}
+
+// keepAlive reports a generic line while a quiet backend works, so hosts that
+// time out idle calls do not abandon a slow turn.
+func (s *server) keepAlive(done <-chan struct{}) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+			s.notifyProgress("still working…")
+		}
+	}
 }
 
 func negotiateProtocolVersion(params json.RawMessage) string {

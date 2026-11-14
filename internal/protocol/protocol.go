@@ -23,9 +23,13 @@ const Version = "vireo/1"
 
 // Frame types.
 const (
-	TypeMessage   uint8 = 0x01
-	TypeData      uint8 = 0x02
-	TypeEnd       uint8 = 0x03
+	TypeMessage uint8 = 0x01
+	TypeData    uint8 = 0x02
+	TypeEnd     uint8 = 0x03
+	// TypePartial carries progress inside a turn: text the agent wants shown
+	// while it is still working. It never ends the turn and never counts as
+	// one; TypeEnd still follows.
+	TypePartial   uint8 = 0x04
 	TypeError     uint8 = 0x05
 	TypeNegotiate uint8 = 0x10
 	TypeManifest  uint8 = 0x11
@@ -41,6 +45,8 @@ func TypeName(t uint8) string {
 		return "data"
 	case TypeEnd:
 		return "end"
+	case TypePartial:
+		return "partial"
 	case TypeError:
 		return "error"
 	case TypeNegotiate:
@@ -179,6 +185,14 @@ type MessageRequest struct {
 type SessionUpdate struct {
 	Summary string `json:"summary,omitempty"`
 	Status  string `json:"status,omitempty"`
+}
+
+// PartialPayload is the payload of a partial frame: something to show while the
+// turn is still running.
+type PartialPayload struct {
+	Kind string `json:"kind"`
+	Seq  int    `json:"seq,omitempty"`
+	Text string `json:"text"`
 }
 
 // MessageResponse is the webhook reply contract. Reply is the agent's answer;
