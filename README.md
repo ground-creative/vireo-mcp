@@ -34,6 +34,32 @@ When an agent has a `start_message` in its configuration, `new_conversation`
 returns that greeting as the text of the tool result: the conversation opens
 with the agent's own words instead of a bare confirmation.
 
+## Live demo
+
+[ziwa.ai](https://ziwa.ai) runs a vireo daemon, discovered through
+`_vireo._tcp.ziwa.ai`. Nothing is installed or configured per vendor — it is one
+host name:
+
+```
+connect ziwa.ai
+
+  sales-representative — Chat with Martin, our Solutions Advisor, about our IT
+                         services, tech stack, or booking a consultation.
+  agent-creator        — Turn your website URL or business scope into a custom
+                         AI support and lead-capture agent.
+
+new_conversation sales-representative
+  Hi, I'm Martin! Have questions about our IT services or want to discuss a
+  project? Let's chat.
+
+send_message "In one sentence, what does ZIWA do?"
+  ZIWA Solutions is a custom software architecture and development company that
+  builds, modernizes, automates, and integrates the technology businesses rely
+  on to operate.
+```
+
+Those are real tool results, not samples.
+
 ## Install
 
 ```bash
