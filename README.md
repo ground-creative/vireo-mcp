@@ -46,11 +46,6 @@ connect ziwa.ai
   <the agents that endpoint exposes right now>
 ```
 
-The manifest is the source of truth: agent names, descriptions and greetings
-come from the daemon at connect time, so nothing here goes stale when a business
-adds, renames or retires an agent. Pick one, open a conversation, send a message
-— the answers come from whatever backend that agent points at.
-
 ## Install
 
 ```bash
