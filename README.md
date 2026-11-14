@@ -186,24 +186,9 @@ either, since a GUI host never reads it. The absolute path always works.
 ### Over HTTP
 
 For a remote host, a container, or one server shared by several assistants.
-Start it, and it prints the token it expects:
-
-```bash
-vireo-mcp -http-addr 127.0.0.1:8091
-```
-
-```
-vireo-mcp: MCP over Streamable HTTP at http://127.0.0.1:8091/mcp
-vireo-mcp: authorization token (send it as a bearer token on every request):
-  Authorization: Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d
-vireo-mcp: client id for that token: vireo_1a30b91e8c38d8907a8a9e843488ab17
-```
-
-Mint a token for another caller without restarting:
-
-```bash
-vireo-mcp -issue-token
-```
+Start it with `-http-addr`: it prints the bearer token and the client id that
+token is bound to, and [HTTP transport](#http-transport) has the full output plus
+the token flags.
 
 Then point the host at the URL and send that token in the `Authorization`
 header.
@@ -217,7 +202,7 @@ header.
       "type": "http",
       "url": "http://127.0.0.1:8091/mcp",
       "headers": {
-        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+        "Authorization": "Bearer vmcp_…"
       }
     }
   }
@@ -232,7 +217,7 @@ header.
     "vireo": {
       "url": "http://127.0.0.1:8091/mcp",
       "headers": {
-        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+        "Authorization": "Bearer vmcp_…"
       }
     }
   }
@@ -248,7 +233,7 @@ header.
       "type": "http",
       "url": "http://127.0.0.1:8091/mcp",
       "headers": {
-        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+        "Authorization": "Bearer vmcp_…"
       }
     }
   }
@@ -271,18 +256,9 @@ which local identity to use — one per host application, so Claude Desktop and
 Cursor do not share conversations.
 
 **Over HTTP** there is no local file to rely on, so identity comes from an
-authorization token instead. The token is bound to a client id the server
-generates once and keeps:
-
-```bash
-vireo-mcp -http-addr 127.0.0.1:8091
-```
-
-```
-vireo-mcp: authorization token (send it as a bearer token on every request):
-  Authorization: Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d
-vireo-mcp: client id for that token: vireo_1a30b91e8c38d8907a8a9e843488ab17
-```
+authorization token instead. The token is bound to a client id that the server
+generates once and keeps; the startup output prints both — see
+[HTTP transport](#http-transport).
 
 Mint more tokens for other callers:
 
