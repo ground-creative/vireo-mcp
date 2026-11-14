@@ -37,28 +37,19 @@ with the agent's own words instead of a bare confirmation.
 ## Live demo
 
 [ziwa.ai](https://ziwa.ai) runs a vireo daemon, discovered through
-`_vireo._tcp.ziwa.ai`. Nothing is installed or configured per vendor — it is one
-host name:
+`_vireo._tcp.ziwa.ai` — one host name, no per-vendor configuration:
 
 ```
 connect ziwa.ai
+  connected to "…" at vireo.ziwa.ai:7778 via SRV record
 
-  sales-representative — Chat with Martin, our Solutions Advisor, about our IT
-                         services, tech stack, or booking a consultation.
-  agent-creator        — Turn your website URL or business scope into a custom
-                         AI support and lead-capture agent.
-
-new_conversation sales-representative
-  Hi, I'm Martin! Have questions about our IT services or want to discuss a
-  project? Let's chat.
-
-send_message "In one sentence, what does ZIWA do?"
-  ZIWA Solutions is a custom software architecture and development company that
-  builds, modernizes, automates, and integrates the technology businesses rely
-  on to operate.
+  <the agents that endpoint exposes right now>
 ```
 
-Those are real tool results, not samples.
+The manifest is the source of truth: agent names, descriptions and greetings
+come from the daemon at connect time, so nothing here goes stale when a business
+adds, renames or retires an agent. Pick one, open a conversation, send a message
+— the answers come from whatever backend that agent points at.
 
 ## Install
 
