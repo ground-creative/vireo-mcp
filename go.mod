@@ -1,4 +1,4 @@
-module vireo-mcp
+module github.com/ground-creative/vireo-mcp
 
 go 1.22
 

@@ -13,16 +13,16 @@ endpoint at runtime — no per-service MCP server, no per-vendor configuration.
 
 ## Tools
 
-| Tool | What it does |
-|---|---|
-| `discover` | probe a domain for a vireo daemon without switching the current connection |
-| `connect` | connect to a business and list the agents behind it |
-| `conversations` | list your previous conversations with one agent (dates, summaries, turn counts) |
-| `new_conversation` | start a new conversation with an agent |
-| `resume_conversation` | resume a previous one, by number or the latest |
-| `send_message` | send a message to the current agent and get its reply |
-| `close_conversation` | close the current conversation |
-| `about` | report the version, build, identity and current connection |
+| Tool                  | What it does                                                                    |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `discover`            | probe a domain for a vireo daemon without switching the current connection      |
+| `connect`             | connect to a business and list the agents behind it                             |
+| `conversations`       | list your previous conversations with one agent (dates, summaries, turn counts) |
+| `new_conversation`    | start a new conversation with an agent                                          |
+| `resume_conversation` | resume a previous one, by number or the latest                                  |
+| `send_message`        | send a message to the current agent and get its reply                           |
+| `close_conversation`  | close the current conversation                                                  |
+| `about`               | report the version, build, identity and current connection                      |
 
 The flow an assistant follows:
 
@@ -30,13 +30,35 @@ The flow an assistant follows:
 connect {host} → choose an agent → conversations/new_conversation → send_message
 ```
 
+When an agent has a `start_message` in its configuration, `new_conversation`
+returns that greeting as the text of the tool result: the conversation opens
+with the agent's own words instead of a bare confirmation.
+
 ## Install
+
+```bash
+go install github.com/ground-creative/vireo-mcp@latest
+```
+
+The binary lands in `$(go env GOPATH)/bin` — `~/go/bin` on most machines. Put
+that on your `PATH` so hosts can start it by name:
+
+```bash
+export PATH="$PATH:$(go env GOPATH)/bin"
+```
+
+That is the whole install: one static binary, no data files of its own. From
+source, if you prefer:
 
 ```bash
 git clone https://github.com/ground-creative/vireo-mcp.git
 cd vireo-mcp
-go build -o vireo-mcp ./dialer
+go build -o vireo-mcp .
 ```
+
+Only the bridge is installed per AI host. The daemon side (`vireo`) is separate
+and is always built from source, because it needs `config/`, `certs/` and
+`sessions/` next to the binary.
 
 ## Load it into your client
 
@@ -49,7 +71,7 @@ go build -o vireo-mcp ./dialer
 {
   "mcpServers": {
     "vireo": {
-      "command": "/absolute/path/to/vireo-mcp"
+      "command": "vireo-mcp"
     }
   }
 }
@@ -65,7 +87,7 @@ Restart Claude Desktop. The `vireo` server appears in the tools menu.
 {
   "mcpServers": {
     "vireo": {
-      "command": "/absolute/path/to/vireo-mcp"
+      "command": "vireo-mcp"
     }
   }
 }
@@ -80,7 +102,7 @@ Restart Claude Desktop. The `vireo` server appears in the tools menu.
   "servers": {
     "vireo": {
       "type": "stdio",
-      "command": "/absolute/path/to/vireo-mcp"
+      "command": "vireo-mcp"
     }
   }
 }
@@ -88,6 +110,86 @@ Restart Claude Desktop. The `vireo` server appears in the tools menu.
 
 Any other MCP host: point it at the binary with the standard stdio transport —
 one JSON-RPC message per line on stdin, one per line on stdout.
+
+If the host does not inherit your shell `PATH` (common for desktop apps launched
+from a dock), give it the absolute path instead: `"command": "/home/you/go/bin/vireo-mcp"`,
+as printed by `go env GOPATH`.
+
+### Over HTTP
+
+For a remote host, a container, or one server shared by several assistants.
+Start it, and it prints the token it expects:
+
+```bash
+vireo-mcp -http-addr 127.0.0.1:8091
+```
+
+```
+vireo-mcp: MCP over Streamable HTTP at http://127.0.0.1:8091/mcp
+vireo-mcp: authorization token (send it as a bearer token on every request):
+  Authorization: Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d
+vireo-mcp: client id for that token: vireo_1a30b91e8c38d8907a8a9e843488ab17
+```
+
+Mint a token for another caller without restarting:
+
+```bash
+vireo-mcp -issue-token
+```
+
+Then point the host at the URL and send that token in the `Authorization`
+header.
+
+**Claude Desktop** — `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vireo": {
+      "type": "http",
+      "url": "http://127.0.0.1:8091/mcp",
+      "headers": {
+        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+      }
+    }
+  }
+}
+```
+
+**Cursor** — `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "vireo": {
+      "url": "http://127.0.0.1:8091/mcp",
+      "headers": {
+        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+      }
+    }
+  }
+}
+```
+
+**VS Code** — `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "vireo": {
+      "type": "http",
+      "url": "http://127.0.0.1:8091/mcp",
+      "headers": {
+        "Authorization": "Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d"
+      }
+    }
+  }
+}
+```
+
+Every request to `/mcp` needs that header; without it the server answers `401`.
+A different token means a different identity, so each assistant — and each
+user — should have its own.
 
 ## Identity
 
@@ -149,7 +251,19 @@ Authorization: Bearer vmcp_ec418d0a9c2e44f6bccc8f32b5dbf69d
 ```
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Connected to \"restaurant\" (restaurant-dev) at localhost:7777 via explicit address.\nThings you can do here:\n  orders — Take food orders: pizzas, sides, drinks, pickup or delivery [conversational]"}],"isError":false}}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Connected to \"restaurant\" (restaurant-dev) at localhost:7777 via explicit address.\nThings you can do here:\n  orders — Take food orders: pizzas, sides, drinks, pickup or delivery [conversational]"
+      }
+    ],
+    "isError": false
+  }
+}
 ```
 
 Without a token, or with one the server does not know:
@@ -175,18 +289,18 @@ _vireo._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
 
 ## Flags
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `-name` | `default` | label for this installation (display only; the id is generated) |
-| `-http-addr` | — | serve MCP over Streamable HTTP on this address instead of stdio |
-| `-insecure` | `true` | skip daemon TLS verification (development only) |
-| `-timeout` | `15s` | per-request timeout toward the daemon |
-| `-issue-token` | — | mint an authorization token for the HTTP transport and print it |
-| `-list-tokens` | — | print the registered tokens and their client ids |
-| `-log` | — | write a JSON-RPC trace to this file, or `-` for stderr |
-| `-tools` | — | print the tool catalog as JSON and exit |
-| `-routes` | — | print the transport/route table and exit |
-| `-version` | — | print name and version and exit |
+| Flag           | Default   | Meaning                                                         |
+| -------------- | --------- | --------------------------------------------------------------- |
+| `-name`        | `default` | label for this installation (display only; the id is generated) |
+| `-http-addr`   | —         | serve MCP over Streamable HTTP on this address instead of stdio |
+| `-insecure`    | `true`    | skip daemon TLS verification (development only)                 |
+| `-timeout`     | `15s`     | per-request timeout toward the daemon                           |
+| `-issue-token` | —         | mint an authorization token for the HTTP transport and print it |
+| `-list-tokens` | —         | print the registered tokens and their client ids                |
+| `-log`         | —         | write a JSON-RPC trace to this file, or `-` for stderr          |
+| `-tools`       | —         | print the tool catalog as JSON and exit                         |
+| `-routes`      | —         | print the transport/route table and exit                        |
+| `-version`     | —         | print name and version and exit                                 |
 
 Environment: `VIREO_MCP_ID` overrides the client id.
 

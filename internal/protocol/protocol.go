@@ -142,10 +142,11 @@ type Endpoint struct {
 // whether the agent holds multi-turn conversations; a stateless agent answers
 // single messages and records nothing.
 type AgentEntry struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Sessions    bool              `json:"sessions"`
-	Refs        map[string]string `json:"refs,omitempty"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Sessions     bool              `json:"sessions"`
+	StartMessage string            `json:"start_message,omitempty"`
+	Refs         map[string]string `json:"refs,omitempty"`
 }
 
 // SessionPolicy is the session contract advertised to callers. The id format
@@ -211,6 +212,14 @@ type SessionRequest struct {
 	Limit     int    `json:"limit,omitempty"`
 	Cursor    string `json:"cursor,omitempty"`
 	Retention string `json:"retention,omitempty"`
+}
+
+// NewSessionResponse is the answer to session.new: the fresh envelope, plus
+// the agent's greeting when it has one. The greeting comes from the
+// configuration, so no backend call is made for it.
+type NewSessionResponse struct {
+	Session      SessionInfo `json:"session"`
+	StartMessage string      `json:"start_message,omitempty"`
 }
 
 // SessionInfo is the session envelope: identity and metadata, never

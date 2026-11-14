@@ -23,8 +23,8 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"vireo-mcp/internal/frame"
-	"vireo-mcp/internal/protocol"
+	"github.com/ground-creative/vireo-mcp/internal/frame"
+	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
 // SRVService and SRVProto form the lookup name: _vireo._tcp.<host>.
@@ -239,21 +239,34 @@ func (c *Client) SendMessage(ctx context.Context, agent, sessionID, message stri
 	return out, nil
 }
 
+// StartedSession is a fresh conversation: its envelope, plus the greeting the
+// agent offered when it started, if it has one. The greeting is produced by the
+// daemon's configuration, so no backend call was made for it.
+type StartedSession struct {
+	Session      SessionInfo
+	StartMessage string
+}
+
 // NewSession asks the daemon to mint a session with one agent.
-func (c *Client) NewSession(ctx context.Context, agent, summary string) (SessionInfo, error) {
-	var info protocol.SessionInfo
+func (c *Client) NewSession(ctx context.Context, agent, summary string) (StartedSession, error) {
+	var resp protocol.NewSessionResponse
 	err := c.session(ctx, protocol.SessionOpNew, protocol.SessionRequest{Agent: agent, Summary: summary},
 		func(data []byte, end *protocol.EndPayload) error {
-			if end != nil && end.Session != nil {
-				info = *end.Session
-				return nil
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return err
 			}
-			return json.Unmarshal(data, &info)
+			if end != nil && end.Session != nil {
+				resp.Session = *end.Session
+			}
+			return nil
 		})
 	if err != nil {
-		return SessionInfo{}, err
+		return StartedSession{}, err
 	}
-	return fromProtocol(info), nil
+	return StartedSession{
+		Session:      fromProtocol(resp.Session),
+		StartMessage: resp.StartMessage,
+	}, nil
 }
 
 // ListSessions returns the caller's sessions with one agent, newest first.

@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"vireo-mcp/internal/client"
-	"vireo-mcp/internal/protocol"
+	"github.com/ground-creative/vireo-mcp/internal/client"
+	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
 // Options configures the dialer.
@@ -391,14 +391,24 @@ func (d *Dialer) toolNew(ctx context.Context, args json.RawMessage) (string, boo
 	if !entry.Sessions {
 		return fmt.Sprintf("%s is stateless — just send it a message.", in.Agent), true
 	}
-	s, err := d.conn.NewSession(ctx, in.Agent, in.Title)
+	started, err := d.conn.NewSession(ctx, in.Agent, in.Title)
 	if err != nil {
 		return friendly(err), false
 	}
 	d.current = in.Agent
-	d.conversations[in.Agent] = s.ID
+	d.conversations[in.Agent] = started.Session.ID
 	delete(d.listed, in.Agent) // the cache predates this conversation
-	return fmt.Sprintf("New conversation with %s started. Send a message to talk.", in.Agent), true
+	return conversationOpened(in.Agent, started.StartMessage), true
+}
+
+// conversationOpened is what the caller reads when a conversation starts. The
+// agent's greeting is part of it when the agent has one: the greeting was
+// already shown, so it is not something the caller has to ask for again.
+func conversationOpened(agent, greeting string) string {
+	if greeting != "" {
+		return fmt.Sprintf("New conversation with %s started.\n\n%s", agent, greeting)
+	}
+	return fmt.Sprintf("New conversation with %s started. Send a message to talk.", agent)
 }
 
 func (d *Dialer) toolResume(ctx context.Context, args json.RawMessage) (string, bool) {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"vireo-mcp/internal/dialer"
-	"vireo-mcp/internal/protocol"
+	"github.com/ground-creative/vireo-mcp/internal/dialer"
+	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
 // harness is a server wired to a temp registry and a recording dialer factory,

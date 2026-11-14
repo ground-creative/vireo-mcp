@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"vireo-mcp/internal/protocol"
+	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
 // The client id is what the daemon scopes conversations by, so it must have the

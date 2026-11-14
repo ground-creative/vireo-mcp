@@ -40,7 +40,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"vireo-mcp/internal/dialer"
+	"github.com/ground-creative/vireo-mcp/internal/dialer"
 )
 
 const serverName = "vireo-mcp"

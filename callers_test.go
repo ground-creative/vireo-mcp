@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"vireo-mcp/internal/protocol"
+	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
 func newCallers(t *testing.T) (*callers, string) {
