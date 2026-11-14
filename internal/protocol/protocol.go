@@ -29,8 +29,13 @@ const (
 	// TypePartial carries progress inside a turn: text the agent wants shown
 	// while it is still working. It never ends the turn and never counts as
 	// one; TypeEnd still follows.
-	TypePartial   uint8 = 0x04
-	TypeError     uint8 = 0x05
+	TypePartial uint8 = 0x04
+	TypeError   uint8 = 0x05
+	// TypeCancel asks the daemon to abandon the turn in flight on the stream
+	// named by the frame's stream id. It is cooperative and best effort: the
+	// daemon stops waiting and cancels the upstream request's context, but
+	// work the backend already committed is not rolled back.
+	TypeCancel    uint8 = 0x13
 	TypeNegotiate uint8 = 0x10
 	TypeManifest  uint8 = 0x11
 	TypeSession   uint8 = 0x12
@@ -55,6 +60,8 @@ func TypeName(t uint8) string {
 		return "manifest"
 	case TypeSession:
 		return "session"
+	case TypeCancel:
+		return "cancel"
 	}
 	return "unknown"
 }
@@ -203,10 +210,13 @@ type MessageResponse struct {
 }
 
 // EndPayload terminates one exchange; it carries the updated session envelope
-// so callers can show summaries without an extra round trip.
+// so callers can show summaries without an extra round trip. Cancelled marks a
+// turn the caller abandoned: OK is false, no envelope is attached, and the turn
+// was not counted.
 type EndPayload struct {
-	OK      bool         `json:"ok"`
-	Session *SessionInfo `json:"session,omitempty"`
+	OK        bool         `json:"ok"`
+	Cancelled bool         `json:"cancelled,omitempty"`
+	Session   *SessionInfo `json:"session,omitempty"`
 }
 
 // ErrorPayload is the payload of error frames.

@@ -47,6 +47,11 @@ type Options struct {
 	OnPartial func(protocol.PartialPayload)
 }
 
+// turnStream is the stream id this client uses for its own calls. One client
+// serialises its calls, so a single id is enough — and it is the id a cancel
+// frame names.
+const turnStream uint32 = 1
+
 // Client talks to one vireo daemon. The manifest is captured at Connect and
 // the connection is held open: every call reuses it, and a broken connection
 // is replaced on the next call.
@@ -56,7 +61,10 @@ type Client struct {
 
 	// mu serialises round trips. The client uses stream id 1 for its own
 	// calls, so two concurrent calls on one connection would interleave.
-	mu    sync.Mutex
+	mu sync.Mutex
+	// wmu guards the connection handle itself, so a cancel frame can be
+	// written while a turn's read is blocked in another goroutine.
+	wmu   sync.Mutex
 	rw    io.ReadWriteCloser
 	rd    *frame.Reader
 	dials int
@@ -157,8 +165,10 @@ func (c *Client) open(ctx context.Context) error {
 		_ = rw.Close()
 		return err
 	}
+	c.wmu.Lock()
 	c.rw = rw
 	c.rd = frame.NewReader(rw)
+	c.wmu.Unlock()
 	c.manifest = m
 	c.dials++
 	return nil
@@ -173,6 +183,8 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) closeLocked() error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	if c.rw == nil {
 		return nil
 	}
@@ -349,12 +361,26 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
 
-// call runs one request on the held connection. A transport failure drops the
-// connection and retries once on a fresh one, so a daemon restart shows up as
-// a slightly slower call instead of an error.
+// call runs one request on the held connection. A transport failure that the
+// daemon never saw is retried once on a fresh connection, so a daemon restart
+// shows up as a slightly slower call instead of an error. A request that did
+// reach the wire is never retried: re-sending a turn would duplicate it.
 func (c *Client) call(ctx context.Context, typ uint8, req any, onDone func(data []byte, end *protocol.EndPayload) error) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Cancellation has to interrupt a read that is already blocked, so expire
+	// the read deadline when the context ends. Without this a cancelled tool
+	// call would sit in Read until the next frame or the request timeout.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.interruptRead()
+		case <-stop:
+		}
+	}()
 
 	for attempt := 0; ; attempt++ {
 		if c.rw == nil {
@@ -363,37 +389,91 @@ func (c *Client) call(ctx context.Context, typ uint8, req any, onDone func(data 
 			}
 		}
 
-		err := c.roundTrip(typ, req, onDone)
+		wrote, err := c.roundTrip(ctx, typ, req, onDone)
 		if err == nil {
 			return nil
+		}
+		if ctx.Err() != nil {
+			// The caller gave up. Nothing to retry: the turn was asked to stop,
+			// and a second attempt would be a second turn. The connection goes
+			// with it — a daemon that did not understand the cancel frame may
+			// have left an error on this stream, and the next call must not read
+			// someone else's answer.
+			_ = c.closeLocked()
+			return ctx.Err()
 		}
 		if _, isProtocol := err.(*Error); isProtocol {
 			return err // the daemon answered; the connection is fine
 		}
 		_ = c.closeLocked()
+		if wrote {
+			// The daemon has seen the request and may already have acted on it.
+			// Surface the failure rather than sending a duplicate; the next call
+			// re-dials on its own.
+			return err
+		}
 		if attempt >= 1 {
 			return err
 		}
 	}
 }
 
-// roundTrip writes one request and reads until the daemon ends or errors.
-// Callers must hold c.mu.
-func (c *Client) roundTrip(typ uint8, req any, onDone func(data []byte, end *protocol.EndPayload) error) error {
+// interruptRead expires the current read deadline so a blocked read returns at
+// once. The next arm() installs a real deadline again.
+func (c *Client) interruptRead() {
+	c.wmu.Lock()
+	rw := c.rw
+	c.wmu.Unlock()
+	if ds, ok := rw.(interface{ SetReadDeadline(time.Time) error }); ok {
+		_ = ds.SetReadDeadline(time.Now())
+	}
+}
+
+// CancelCurrent asks the daemon to abandon the turn in flight on this client's
+// message stream. It is best effort and safe to call from another goroutine
+// while the turn's read is blocked: the daemon cancels the upstream request's
+// context, and whatever the backend already committed is not rolled back.
+func (c *Client) CancelCurrent() error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	if c.rw == nil {
+		return nil
+	}
+	return frame.Write(c.rw, frame.Frame{StreamID: turnStream, Type: protocol.TypeCancel})
+}
+
+// roundTrip writes one request and reads until the daemon ends or errors. The
+// bool reports whether the request reached the wire: a written request is one
+// the daemon may already have acted on, so it must not be retried. Callers
+// must hold c.mu.
+func (c *Client) roundTrip(ctx context.Context, typ uint8, req any, onDone func(data []byte, end *protocol.EndPayload) error) (bool, error) {
 	payload, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := frame.Write(c.rw, frame.Frame{StreamID: 1, Type: typ, Payload: payload}); err != nil {
-		return fmt.Errorf("send request: %w", err)
+	c.wmu.Lock()
+	rw, rd := c.rw, c.rd
+	if rw == nil || rd == nil {
+		c.wmu.Unlock()
+		return false, fmt.Errorf("send request: connection closed")
+	}
+	err = frame.Write(rw, frame.Frame{StreamID: turnStream, Type: typ, Payload: payload})
+	c.wmu.Unlock()
+	if err != nil {
+		return false, fmt.Errorf("send request: %w", err)
 	}
 
 	var data []byte
 	for {
-		arm(c.rw, c.opts.Timeout)
-		f, err := c.rd.Read()
+		arm(rw, c.opts.Timeout)
+		// Checked after arming and before reading: if a cancel expired the
+		// deadline just before arm reset it, this is what catches it.
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		f, err := rd.Read()
 		if err != nil {
-			return fmt.Errorf("read response: %w", err)
+			return true, fmt.Errorf("read response: %w", err)
 		}
 		switch f.Type {
 		case protocol.TypeData:
@@ -409,11 +489,11 @@ func (c *Client) roundTrip(typ uint8, req any, onDone func(data []byte, end *pro
 		case protocol.TypeEnd:
 			var ep protocol.EndPayload
 			_ = json.Unmarshal(f.Payload, &ep)
-			return onDone(data, &ep)
+			return true, onDone(data, &ep)
 		case protocol.TypeError:
 			var e protocol.ErrorPayload
 			_ = json.Unmarshal(f.Payload, &e)
-			return &Error{Code: e.Code, Message: e.Message}
+			return true, &Error{Code: e.Code, Message: e.Message}
 		}
 	}
 }

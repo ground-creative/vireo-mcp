@@ -16,6 +16,11 @@
 // minted once and stored under the user config directory, so conversations
 // resume across restarts.
 //
+// A tool call is dispatched in its own goroutine so the transport keeps
+// reading: when the host cancels, the bridge has to see it while the turn is
+// still running. Cancelling stops the wait and asks the daemon to abandon the
+// call — it is not a rollback, because the message already left.
+//
 // Over HTTP (-http-addr) the caller must present an authorization token:
 //
 //	Authorization: Bearer vmcp_…
@@ -44,8 +49,11 @@ import (
 )
 
 const serverName = "vireo-mcp"
-const serverVersion = "0.5.0"
+const serverVersion = "0.6.0"
 const defaultProtocolVersion = "2024-11-05"
+
+// codeCancelled is the MCP error code for a request the receiver abandoned.
+const codeCancelled = -32800
 
 // Injected at build time: -ldflags "-X main.buildCommit=... -X main.buildTime=..."
 var (
@@ -110,6 +118,7 @@ func main() {
 		name:      *label,
 		instances: map[string]*instance{},
 		callers:   registry,
+		inflight:  map[string]func(){},
 	}
 	s.newDialer = func(id string) *dialer.Dialer {
 		return dialer.New(dialer.Options{
@@ -199,6 +208,15 @@ type server struct {
 	progressMu    sync.Mutex
 	progressToken string
 	progressSeq   int
+
+	// outMu serialises stdout: a tool call answers from its own goroutine and
+	// progress notifications can write at any time.
+	outMu sync.Mutex
+
+	// inflight maps a JSON-RPC request id to the cancel action for that call,
+	// so notifications/cancelled can reach a call that is still running.
+	inflightMu sync.Mutex
+	inflight   map[string]func()
 }
 
 // instance is the live state for one caller: a connection and its current
@@ -286,26 +304,51 @@ func (s *server) record(dir, text string) {
 }
 
 // serveStdio runs the transport every MCP host uses by default: one JSON-RPC
-// message per line in, one out. Nothing is printed unless a message arrives.
+// message per line in, one out. Tool calls are dispatched in their own
+// goroutine, because a turn can take minutes and the loop has to keep reading —
+// otherwise the host's cancel notification would sit in the pipe unread.
+// Everything else is answered inline, in order.
 func (s *server) serveStdio() {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 1<<20), 1<<20)
-	out := bufio.NewWriter(os.Stdout)
-	defer out.Flush()
 
 	for in.Scan() {
 		line := bytes.TrimSpace(in.Bytes())
 		if len(line) == 0 {
 			continue
 		}
+		msg := append([]byte(nil), line...)
+		if isToolCall(msg) {
+			go func(b []byte) {
+				if resp := s.handleLine(s.d, b); resp != "" {
+					s.writeLine(resp)
+				}
+			}(msg)
+			continue
+		}
 		if resp := s.handleLine(s.d, line); resp != "" {
-			fmt.Fprintln(out, resp)
-			out.Flush()
+			s.writeLine(resp)
 		}
 	}
 	if err := in.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: stdin: %v\n", serverName, err)
 	}
+}
+
+// isToolCall reports whether a line is a tools/call request, the only message
+// that can block for the length of a turn.
+func isToolCall(line []byte) bool {
+	var probe struct {
+		Method string `json:"method"`
+	}
+	return json.Unmarshal(line, &probe) == nil && probe.Method == "tools/call"
+}
+
+// writeLine emits one JSON-RPC message, serialised against progress lines.
+func (s *server) writeLine(text string) {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	fmt.Fprintln(os.Stdout, text)
 }
 
 // route is one entry in the human-facing route table. The MCP spec has no
@@ -555,8 +598,12 @@ func (s *server) handleLine(d *dialer.Dialer, line []byte) string {
 		return resp
 	}
 
-	// Notifications (no id) get no response.
+	// Notifications (no id) get no response. A cancel is the one that has to do
+	// something before it is dropped.
 	if strings.HasPrefix(msg.Method, "notifications/") {
+		if msg.Method == "notifications/cancelled" {
+			s.handleCancelled(msg.Params)
+		}
 		return ""
 	}
 
@@ -649,18 +696,73 @@ func (s *server) handleToolsCall(d *dialer.Dialer, msg rpcMessage) string {
 	if params.Arguments == nil {
 		params.Arguments = json.RawMessage("{}")
 	}
+
+	// The turn is already on its way to the daemon, so cancelling stops the
+	// wait and asks the daemon to abandon the call. It is not a rollback.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	key := requestKey(msg.ID)
+	s.inflightMu.Lock()
+	if s.inflight == nil {
+		s.inflight = map[string]func(){}
+	}
+	s.inflight[key] = func() {
+		d.Cancel()
+		cancel()
+	}
+	s.inflightMu.Unlock()
+	defer func() {
+		s.inflightMu.Lock()
+		delete(s.inflight, key)
+		s.inflightMu.Unlock()
+	}()
+
 	s.beginProgress(params.Meta.ProgressToken)
 	done := make(chan struct{})
 	go s.keepAlive(done)
-	text, ok := d.Handle(context.Background(), params.Name, params.Arguments)
+	text, ok := d.Handle(ctx, params.Name, params.Arguments)
 	close(done)
 	s.endProgress()
+
+	if ctx.Err() != nil {
+		// The host gave up. Say so plainly: the turn may already have run.
+		return respondError(msg.ID, codeCancelled,
+			"cancelled by the host — the turn may still have completed on the daemon")
+	}
 
 	result := map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": !ok,
 	}
 	return respond(msg.ID, result)
+}
+
+// handleCancelled abandons the tool call the host names. The turn was already
+// sent to the daemon, so this stops the wait and asks the daemon to abandon the
+// backend call too — it is not a rollback.
+func (s *server) handleCancelled(params json.RawMessage) {
+	var p struct {
+		RequestID json.RawMessage `json:"requestId"`
+		Reason    string          `json:"reason"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil || len(p.RequestID) == 0 {
+		return
+	}
+	key := requestKey(p.RequestID)
+	s.inflightMu.Lock()
+	cancel, ok := s.inflight[key]
+	s.inflightMu.Unlock()
+	if !ok {
+		return // the call already finished; nothing to abandon
+	}
+	s.logf("cancelled request %s (%s)", key, p.Reason)
+	cancel()
+}
+
+// requestKey normalises a JSON-RPC id into a map key. Ids arrive as rendered
+// JSON, so the same id renders the same way on both sides of the exchange.
+func requestKey(id json.RawMessage) string {
+	return string(bytes.TrimSpace(id))
 }
 
 // beginProgress starts a turn: the token decides whether anything is
@@ -708,6 +810,8 @@ func (s *server) notifyProgress(text string) {
 		return
 	}
 	s.record("->", string(b))
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	fmt.Fprintln(s.progressOut, string(b))
 }
 

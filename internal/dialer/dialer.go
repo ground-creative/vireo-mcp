@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ground-creative/vireo-mcp/internal/client"
@@ -37,12 +39,22 @@ type Options struct {
 	OnPartial func(text string)
 }
 
-// Dialer is the tool engine. It is safe to drive sequentially, the way MCP
-// hosts call tools.
+// Dialer is the tool engine. Tool calls are serialised: an MCP host may have
+// several in flight at once, and the conversation and connection state below is
+// a plain set of fields, not a concurrent data structure.
 type Dialer struct {
 	opts Options
 
-	conn    *client.Client
+	// mu serialises the tool bodies and the state they touch.
+	mu sync.Mutex
+
+	conn *client.Client
+
+	// live mirrors conn for Cancel, which runs from another goroutine while a
+	// tool call holds mu, and so cannot take it. It is the only field read
+	// without the lock.
+	live atomic.Pointer[client.Client]
+
 	addr    string
 	current string // chosen agent
 
@@ -142,6 +154,14 @@ func (d *Dialer) displayName() string {
 // Close releases the daemon connection. Called when an idle HTTP caller is
 // evicted, and when a new connect replaces the current daemon.
 func (d *Dialer) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.closeLocked()
+}
+
+// closeLocked is Close for a caller that already holds mu.
+func (d *Dialer) closeLocked() error {
+	d.live.Store(nil)
 	if d.conn == nil {
 		return nil
 	}
@@ -155,6 +175,8 @@ func (d *Dialer) ClientID() string { return d.opts.ClientID }
 
 // State reports the current connection, for diagnostics.
 func (d *Dialer) State() (addr, agent string, connected bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.addr, d.current, d.conn != nil
 }
 
@@ -228,7 +250,13 @@ func (d *Dialer) Tools() []map[string]any {
 
 // Handle runs one tool call and returns its text result. A tool error is
 // returned as a friendly message with ok=false; protocol plumbing stays out.
+//
+// Calls are serialised: the host may issue several at once, and the state below
+// is kept in plain maps.
 func (d *Dialer) Handle(ctx context.Context, name string, args json.RawMessage) (text string, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	switch name {
 	case "discover":
 		return d.toolDiscover(ctx, args)
@@ -246,6 +274,16 @@ func (d *Dialer) Handle(ctx context.Context, name string, args json.RawMessage) 
 		return d.toolClose(ctx, args)
 	default:
 		return fmt.Sprintf("unknown tool %q", name), false
+	}
+}
+
+// Cancel asks the daemon to abandon the turn in flight, if there is one. It is
+// best effort and safe to call while Handle is still running in another
+// goroutine — which is the point: mu is deliberately not taken here, because the
+// running call is the one holding it.
+func (d *Dialer) Cancel() {
+	if c := d.live.Load(); c != nil {
+		_ = c.CancelCurrent()
 	}
 }
 
@@ -318,8 +356,9 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 	if err != nil {
 		return fmt.Sprintf("connect to %s failed: %v", addr, err), false
 	}
-	d.Close() // drop the previous daemon's connection, if any
+	d.closeLocked() // drop the previous daemon's connection, if any
 	d.conn = c
+	d.live.Store(c)
 	d.addr = addr
 	d.current = ""
 	d.conversations = map[string]string{}

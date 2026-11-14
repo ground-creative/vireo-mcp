@@ -293,6 +293,57 @@ more than ten seconds, a generic "still working…" line keeps the call alive.
 Over HTTP there is no notification channel: one POST yields one response, so
 progress is silent there.
 
+## Cancelling a call
+
+A host that stops a tool call sends the standard MCP cancellation:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/cancelled",
+  "params": { "requestId": 4, "reason": "user pressed stop" }
+}
+```
+
+`vireo-mcp` matches `requestId` to the tool call still running and does two
+things:
+
+1. stops waiting for the answer;
+2. sends a `cancel` frame to the daemon naming that turn's stream, so the daemon
+   cancels the backend request too.
+
+The abandoned call is answered with the MCP code for a cancelled request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "error": {
+    "code": -32800,
+    "message": "cancelled by the host — the turn may still have completed on the daemon"
+  }
+}
+```
+
+**Cancellation is not a rollback.** The message already reached the daemon
+before the host could cancel it, so the daemon can stop waiting and can abort the
+upstream request, but it cannot undo work the backend already committed. A build
+that had already provisioned an assistant stays provisioned. A cancelled turn is
+not counted in the session: `turns` and the summary are left untouched.
+
+To make this work the read loop has to stay free while a call runs, so
+`tools/call` is dispatched in its own goroutine. A blocking loop could never read
+the cancellation — it would sit in the pipe until the turn finished, which is
+exactly the bug this replaced.
+
+There is one more consequence worth knowing: a request that has already been
+written to the daemon is **never retried**. Retrying a turn whose read failed
+would deliver the same message twice. Only a request that never reached the wire
+is retried, so a daemon restart still looks like a slightly slower call.
+
+Over HTTP there is no server-to-client notification stream per call; the cancel
+is honoured on a best-effort basis for the caller's own instance.
+
 ## HTTP transport
 
 `-http-addr` serves MCP over Streamable HTTP instead of stdio. Useful for
