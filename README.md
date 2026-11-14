@@ -273,8 +273,15 @@ the host staring at a spinner. When the daemon relays such a line, `send_message
 emits an MCP notification over stdio:
 
 ```json
-{"jsonrpc":"2.0","method":"notifications/progress",
- "params":{"progressToken":"tok","progress":1,"message":"fetching your site…"}}
+{
+  "jsonrpc": "2.0",
+  "method": "notifications/progress",
+  "params": {
+    "progressToken": "tok",
+    "progress": 1,
+    "message": "fetching your site…"
+  }
+}
 ```
 
 The token comes from `params._meta.progressToken` in the `tools/call` request; a
