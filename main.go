@@ -44,7 +44,7 @@ import (
 )
 
 const serverName = "vireo-mcp"
-const serverVersion = "0.4.0"
+const serverVersion = "0.5.0"
 const defaultProtocolVersion = "2024-11-05"
 
 // Injected at build time: -ldflags "-X main.buildCommit=... -X main.buildTime=..."
