@@ -325,6 +325,9 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 			mode = "stateless"
 		}
 		fmt.Fprintf(&b, "\n  %s — %s [%s]", a.Name, a.Description, mode)
+		if len(a.Tags) > 0 {
+			fmt.Fprintf(&b, "\n      tags: %s", strings.Join(a.Tags, ", "))
+		}
 	}
 	if links := m.LinksOrRefs(); len(links) > 0 {
 		b.WriteString("\nPublished references:")
@@ -383,6 +386,9 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 			mode = "stateless — send a message directly"
 		}
 		fmt.Fprintf(&b, "\n  %s — %s [%s]", a.Name, a.Description, mode)
+		if len(a.Tags) > 0 {
+			fmt.Fprintf(&b, "\n      tags: %s", strings.Join(a.Tags, ", "))
+		}
 	}
 	if links := m.LinksOrRefs(); len(links) > 0 {
 		b.WriteString("\nPublished references:")

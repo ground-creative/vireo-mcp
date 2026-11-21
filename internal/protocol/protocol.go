@@ -24,7 +24,7 @@ const Version = "vireo/1"
 
 // ManifestVersion is the manifest compatibility level this adapter understands.
 // It is independent of Version (the wire protocol) and of the spec release tag.
-const ManifestVersion = "1.2"
+const ManifestVersion = "1.3"
 
 // ManifestVersionFallback is what a manifest without manifest_version means.
 const ManifestVersionFallback = "1.0"
@@ -201,6 +201,7 @@ type AgentEntry struct {
 	ID           string            `json:"id,omitempty"`
 	Name         string            `json:"name"`
 	Description  string            `json:"description,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
 	Sessions     bool              `json:"sessions"`
 	StartMessage string            `json:"start_message,omitempty"`
 	Links        []Link            `json:"links,omitempty"`
@@ -268,6 +269,7 @@ func (m Manifest) LinksOrRefs() []Link {
 var (
 	ManifestVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 	AgentNamePattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	TagPattern             = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 	LinkRelPattern         = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 	AbsoluteURIPattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
 	DigestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -316,6 +318,16 @@ func (m Manifest) validate() error {
 		seen[a.Name] = true
 		if a.Sessions {
 			anySessions = true
+		}
+		tagSeen := make(map[string]bool, len(a.Tags))
+		for j, tag := range a.Tags {
+			if !TagPattern.MatchString(tag) {
+				return fmt.Errorf("agents[%d] %q: tags[%d] %q does not match %s (MAN-55)", i, a.Name, j, tag, TagPattern)
+			}
+			if tagSeen[tag] {
+				return fmt.Errorf("agents[%d] %q: duplicate tag %q (MAN-55)", i, a.Name, tag)
+			}
+			tagSeen[tag] = true
 		}
 		if err := validateLinks(fmt.Sprintf("agents[%d] %q", i, a.Name), a.Links); err != nil {
 			return err
