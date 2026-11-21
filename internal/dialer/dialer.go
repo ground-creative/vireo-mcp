@@ -298,16 +298,17 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 	if err := json.Unmarshal(args, &in); err != nil || strings.TrimSpace(in.Host) == "" {
 		return "discover needs {\"host\": \"example.com\"}", false
 	}
-	addr, via, err := client.DiscoverDetail(in.Host, nil)
+	addr, serverName, via, err := client.DiscoverTarget(in.Host, nil)
 	if err != nil {
 		return "discovery failed: " + err.Error(), false
 	}
 	c, err := client.Connect(ctx, client.Options{
-		Addr:     addr,
-		ClientID: d.opts.ClientID,
-		Name:     d.displayName() + " (probe)",
-		Timeout:  d.opts.Timeout,
-		Insecure: d.opts.Insecure,
+		Addr:       addr,
+		ServerName: serverName,
+		ClientID:   d.opts.ClientID,
+		Name:       d.displayName() + " (probe)",
+		Timeout:    d.opts.Timeout,
+		Insecure:   d.opts.Insecure,
 	})
 	if err != nil {
 		return fmt.Sprintf("No agent endpoint at %s (tried %s, via %s): %v\nThe domain does not run a vireo daemon — or it is down.",
@@ -350,16 +351,17 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 	if err := json.Unmarshal(args, &in); err != nil || strings.TrimSpace(in.Host) == "" {
 		return "connect needs {\"host\": \"example.com\"}", false
 	}
-	addr, via, err := client.DiscoverDetail(in.Host, nil)
+	addr, serverName, via, err := client.DiscoverTarget(in.Host, nil)
 	if err != nil {
 		return "discovery failed: " + err.Error(), false
 	}
 	c, err := client.Connect(ctx, client.Options{
-		Addr:     addr,
-		ClientID: d.opts.ClientID,
-		Name:     d.displayName(),
-		Timeout:  d.opts.Timeout,
-		Insecure: d.opts.Insecure,
+		Addr:       addr,
+		ServerName: serverName,
+		ClientID:   d.opts.ClientID,
+		Name:       d.displayName(),
+		Timeout:    d.opts.Timeout,
+		Insecure:   d.opts.Insecure,
 		OnPartial: func(p protocol.PartialPayload) {
 			if d.opts.OnPartial != nil && strings.TrimSpace(p.Text) != "" {
 				d.opts.OnPartial(strings.TrimSpace(p.Text))

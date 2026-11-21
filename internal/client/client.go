@@ -35,7 +35,13 @@ const (
 
 // Options configures a client for one daemon.
 type Options struct {
-	Addr     string // resolved daemon address host:port
+	Addr string // resolved daemon address host:port
+
+	// ServerName is the identity the certificate must be valid for: the domain
+	// the caller asked for, which is not necessarily the host in Addr (PROTO-47,
+	// SEC-9). Empty means "use the host in Addr".
+	ServerName string
+
 	ClientID string // stable, required by the daemon
 	Name     string // human-readable client label (optional)
 	Timeout  time.Duration
@@ -135,6 +141,24 @@ func DiscoverDetail(host string, res Resolver) (addr, via string, err error) {
 	}
 	return "", "", fmt.Errorf("no SRV record _%s._%s.%s — connect with an explicit host:port instead",
 		SRVService, SRVProto, host)
+}
+
+// DiscoverTarget is DiscoverDetail plus the name the certificate must cover.
+//
+// Given a bare domain, the reference name is that domain, even though SRV sends
+// the connection to some other host: verifying the target instead would let a
+// DNS answer silently move which certificate is acceptable (SEC-9).
+func DiscoverTarget(host string, res Resolver) (addr, serverName, via string, err error) {
+	addr, via, err = DiscoverDetail(host, res)
+	if err != nil {
+		return "", "", "", err
+	}
+	serverName = strings.TrimSpace(host)
+	if h, _, splitErr := net.SplitHostPort(serverName); splitErr == nil {
+		serverName = h
+	}
+	serverName = strings.Trim(serverName, "[]")
+	return addr, serverName, via, nil
 }
 
 // Connect dials opts.Addr, negotiates with the client id, and captures the
@@ -557,6 +581,11 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 	host := opts.Addr
 	if h, _, err := net.SplitHostPort(opts.Addr); err == nil {
 		host = h
+	}
+	// The certificate is checked against the name the caller asked for, which is
+	// the SRV target only when that is what was given (PROTO-47).
+	if opts.ServerName != "" {
+		host = opts.ServerName
 	}
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: opts.Insecure,
