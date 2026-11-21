@@ -39,7 +39,7 @@ type Options struct {
 	ClientID string // stable, required by the daemon
 	Name     string // human-readable client label (optional)
 	Timeout  time.Duration
-	Insecure bool // skip TLS verification (dev only)
+	Insecure bool // skip TLS verification; unsafe, local development only (SEC-6, SEC-7)
 	UseQUIC  bool
 
 	// OnPartial receives progress the agent sends while it is still working
@@ -519,6 +519,11 @@ func negotiate(rw io.ReadWriteCloser, opts Options) (protocol.Manifest, error) {
 		if err := json.Unmarshal(f.Payload, &m); err != nil {
 			return protocol.Manifest{}, err
 		}
+		// The manifest is the contract: refuse a document that is not one rather
+		// than acting on a partial reading of it (MAN-47, MAN-48).
+		if err := m.ValidateAsClient(); err != nil {
+			return protocol.Manifest{}, fmt.Errorf("manifest rejected: %w", err)
+		}
 		return m, nil
 	case protocol.TypeError:
 		var e protocol.ErrorPayload
@@ -562,7 +567,7 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 	if opts.UseQUIC {
 		conn, err := quic.DialAddr(dctx, opts.Addr, tlsCfg, &quic.Config{MaxIdleTimeout: opts.Timeout})
 		if err != nil {
-			return nil, err
+			return nil, verificationHint(err, opts)
 		}
 		stream, err := conn.OpenStreamSync(dctx)
 		if err != nil {
@@ -572,7 +577,24 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 		return &quicSession{conn: conn, stream: stream}, nil
 	}
 	d := &net.Dialer{Timeout: opts.Timeout}
-	return tls.DialWithDialer(d, "tcp", opts.Addr, tlsCfg)
+	rw, err := tls.DialWithDialer(d, "tcp", opts.Addr, tlsCfg)
+	if err != nil {
+		return nil, verificationHint(err, opts)
+	}
+	return rw, nil
+}
+
+// verificationHint explains a failed handshake when certificate verification is
+// on, because the usual cause locally is a development certificate no public CA
+// chains to. It names the escape hatch instead of hinting that verification is
+// optional: with verification off the connection is encrypted but the business's
+// identity is not established (SEC-6, SEC-7).
+func verificationHint(err error, opts Options) error {
+	if opts.Insecure {
+		return err
+	}
+	return fmt.Errorf("%w\ncertificate verification failed for %q; a development certificate is not trusted by the system. "+
+		"Pass -insecure to skip verification, which is unsafe and only for local development", err, opts.Addr)
 }
 
 func arm(rw io.ReadWriteCloser, d time.Duration) {

@@ -63,8 +63,10 @@ func (d *silentDaemon) handle(conn net.Conn, hangUpAfterMessage bool) {
 		return
 	}
 	manifest, _ := json.Marshal(protocol.Manifest{
-		Protocol: protocol.Version,
-		Agents:   []protocol.AgentEntry{{Name: "concierge", Sessions: true}},
+		ManifestVersion: protocol.ManifestVersion,
+		Protocol:        protocol.Version,
+		Endpoint:        protocol.Endpoint{Name: "test"},
+		Agents:          []protocol.AgentEntry{{Name: "concierge", Sessions: true}},
 	})
 	if err := frame.Write(conn, frame.Frame{StreamID: 0, Type: protocol.TypeManifest, Payload: manifest}); err != nil {
 		return

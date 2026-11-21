@@ -325,6 +325,23 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 			mode = "stateless"
 		}
 		fmt.Fprintf(&b, "\n  %s — %s [%s]", a.Name, a.Description, mode)
+		if len(a.Actions) > 0 {
+			names := make([]string, 0, len(a.Actions))
+			for _, act := range a.Actions {
+				names = append(names, act.Name)
+			}
+			fmt.Fprintf(&b, "\n      does: %s", strings.Join(names, ", "))
+		}
+	}
+	if links := m.LinksOrRefs(); len(links) > 0 {
+		b.WriteString("\nPublished references:")
+		for _, l := range links {
+			label := l.Label
+			if label == "" {
+				label = l.Rel
+			}
+			fmt.Fprintf(&b, "\n  %s — %s", label, l.Href)
+		}
 	}
 	b.WriteString("\nConnect with the connect tool to start working with it.")
 	return b.String(), true
@@ -373,6 +390,23 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 			mode = "stateless — send a message directly"
 		}
 		fmt.Fprintf(&b, "\n  %s — %s [%s]", a.Name, a.Description, mode)
+		if len(a.Actions) > 0 {
+			names := make([]string, 0, len(a.Actions))
+			for _, act := range a.Actions {
+				names = append(names, act.Name)
+			}
+			fmt.Fprintf(&b, "\n      does: %s", strings.Join(names, ", "))
+		}
+	}
+	if links := m.LinksOrRefs(); len(links) > 0 {
+		b.WriteString("\nPublished references:")
+		for _, l := range links {
+			label := l.Label
+			if label == "" {
+				label = l.Rel
+			}
+			fmt.Fprintf(&b, "\n  %s — %s", label, l.Href)
+		}
 	}
 	b.WriteString("\nStart with conversations {agent} or new_conversation {agent}, then send_message.")
 	return b.String(), true

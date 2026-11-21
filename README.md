@@ -415,7 +415,7 @@ _vireo._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
 | -------------- | --------- | --------------------------------------------------------------- |
 | `-name`        | `default` | label for this installation (display only; the id is generated) |
 | `-http-addr`   | —         | serve MCP over Streamable HTTP on this address instead of stdio |
-| `-insecure`    | `true`    | skip daemon TLS verification (development only)                 |
+| `-insecure`    | `false`   | skip daemon TLS verification (unsafe; local development only)   |
 | `-timeout`     | `120s`    | per-request timeout toward the daemon                           |
 | `-issue-token` | —         | mint an authorization token for the HTTP transport and print it |
 | `-list-tokens` | —         | print the registered tokens and their client ids                |
@@ -425,6 +425,12 @@ _vireo._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
 | `-version`     | —         | print name and version and exit                                 |
 
 Environment: `VIREO_MCP_ID` overrides the client id.
+
+Certificate verification is on by default: the certificate must cover the domain
+you asked for. A daemon on `localhost` with a certificate from
+`scripts/gen-certs.sh` is not trusted by the system, so local runs need
+`-insecure`, which prints a warning. See `SEC-6` and `SEC-7` in the
+[specification](https://github.com/ground-creative/agent-front-door-spec).
 
 ## Drive it by hand
 

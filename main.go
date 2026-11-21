@@ -63,7 +63,7 @@ var (
 
 func main() {
 	label := flag.String("name", "default", "label for this installation, e.g. claude-desktop (display only; the id is generated)")
-	insecure := flag.Bool("insecure", true, "skip daemon TLS verification (dev only)")
+	insecure := flag.Bool("insecure", false, "skip daemon TLS verification (UNSAFE; local development only)")
 	timeout := flag.Duration("timeout", 120*time.Second, "per-request timeout toward the daemon")
 	httpAddr := flag.String("http-addr", "", "serve MCP over Streamable HTTP on this address instead of stdio, e.g. 127.0.0.1:8081")
 	issueToken := flag.Bool("issue-token", false, "mint a new authorization token for the HTTP transport and print it")
@@ -81,6 +81,13 @@ func main() {
 	if *showRoutes {
 		printRoutes()
 		return
+	}
+
+	// Verification is on by default: with it off the traffic is still encrypted,
+	// but nothing binds the connection to the business being contacted (SEC-6).
+	// The warning goes to stderr: stdout carries the MCP stream over stdio.
+	if *insecure {
+		fmt.Fprintf(os.Stderr, "%s: warning: -insecure disables certificate verification; the endpoint's identity is not established\n", serverName)
 	}
 
 	clientID, err := dialer.LoadOrCreateID(*label)
