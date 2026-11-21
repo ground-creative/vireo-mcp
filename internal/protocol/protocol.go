@@ -24,7 +24,7 @@ const Version = "vireo/1"
 
 // ManifestVersion is the manifest compatibility level this adapter understands.
 // It is independent of Version (the wire protocol) and of the spec release tag.
-const ManifestVersion = "1.1"
+const ManifestVersion = "1.2"
 
 // ManifestVersionFallback is what a manifest without manifest_version means.
 const ManifestVersionFallback = "1.0"
@@ -169,15 +169,6 @@ type Link struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Action is something an agent claims it can do. Input and Output are
-// free-form hints, not schemas.
-type Action struct {
-	Name    string `json:"name"`
-	Summary string `json:"summary"`
-	Input   string `json:"input,omitempty"`
-	Output  string `json:"output,omitempty"`
-}
-
 // SessionOps says which session operations the endpoint accepts.
 type SessionOps struct {
 	New   bool `json:"new"`
@@ -212,7 +203,6 @@ type AgentEntry struct {
 	Description  string            `json:"description,omitempty"`
 	Sessions     bool              `json:"sessions"`
 	StartMessage string            `json:"start_message,omitempty"`
-	Actions      []Action          `json:"actions,omitempty"`
 	Links        []Link            `json:"links,omitempty"`
 	Limits       *Limits           `json:"limits,omitempty"`
 	Session      *SessionPolicy    `json:"session,omitempty"`
@@ -278,7 +268,6 @@ func (m Manifest) LinksOrRefs() []Link {
 var (
 	ManifestVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 	AgentNamePattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	ActionNamePattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	LinkRelPattern         = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 	AbsoluteURIPattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
 	DigestPattern          = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -327,19 +316,6 @@ func (m Manifest) validate() error {
 		seen[a.Name] = true
 		if a.Sessions {
 			anySessions = true
-		}
-		actSeen := make(map[string]bool, len(a.Actions))
-		for j, act := range a.Actions {
-			if !ActionNamePattern.MatchString(act.Name) {
-				return fmt.Errorf("agents[%d] %q: actions[%d] %q does not match %s (MAN-24)", i, a.Name, j, act.Name, ActionNamePattern)
-			}
-			if act.Summary == "" {
-				return fmt.Errorf("agents[%d] %q: actions[%d] %q: summary is required", i, a.Name, j, act.Name)
-			}
-			if actSeen[act.Name] {
-				return fmt.Errorf("agents[%d] %q: duplicate action %q (MAN-24)", i, a.Name, act.Name)
-			}
-			actSeen[act.Name] = true
 		}
 		if err := validateLinks(fmt.Sprintf("agents[%d] %q", i, a.Name), a.Links); err != nil {
 			return err
