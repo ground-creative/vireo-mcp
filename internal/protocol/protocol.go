@@ -20,7 +20,7 @@ import (
 
 // Version is the ALPN identifier and the protocol string carried in negotiate
 // and manifest frames.
-const Version = "vireo/1"
+const Version = "frontdoor/1"
 
 // ManifestVersion is the manifest compatibility level this adapter understands.
 // It is independent of Version (the wire protocol) and of the spec release tag.

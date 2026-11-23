@@ -194,7 +194,7 @@ func (d *Dialer) Tools() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "discover",
-			"description": "Probe a domain for a vireo daemon without switching the current connection. Resolves the DNS SRV record _vireo._tcp.<host> and attempts a connection. Returns what the endpoint offers, or a clean \"no agent endpoint\" answer — which is information for deciding your next move, not an error.",
+			"description": "Probe a domain for a vireo daemon without switching the current connection. Resolves the DNS SRV record _frontdoor._tcp.<host> and attempts a connection. Returns what the endpoint offers, or a clean \"no agent endpoint\" answer — which is information for deciding your next move, not an error.",
 			"inputSchema": obj(map[string]any{
 				"host": str("Domain to probe, e.g. example.com — or host:port for an explicit address."),
 			}, "host"),
@@ -203,7 +203,7 @@ func (d *Dialer) Tools() []map[string]any {
 			"name":        "connect",
 			"description": "Discover and connect to a vireo daemon (a business). Returns the list of agents — the things you can talk to there. Choose one with conversations or new_conversation.",
 			"inputSchema": obj(map[string]any{
-				"host": str("Hostname or host:port. A bare host is resolved through its _vireo._tcp SRV record."),
+				"host": str("Hostname or host:port. A bare host is resolved through its _frontdoor._tcp SRV record."),
 			}, "host"),
 		},
 		{

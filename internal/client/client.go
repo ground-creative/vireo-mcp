@@ -27,9 +27,9 @@ import (
 	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
-// SRVService and SRVProto form the lookup name: _vireo._tcp.<host>.
+// SRVService and SRVProto form the lookup name: _frontdoor._tcp.<host>.
 const (
-	SRVService = "vireo"
+	SRVService = "frontdoor"
 	SRVProto   = "tcp"
 )
 
@@ -84,7 +84,7 @@ type Resolver interface {
 // Discover resolves a hostname to a daemon address:
 //
 //  1. host already carries a port → used as-is, no lookup
-//  2. SRV lookup _vireo._tcp.<host> → host and port from the record
+//  2. SRV lookup _frontdoor._tcp.<host> → host and port from the record
 //
 // There is no default port and no fallback: an endpoint that is not published
 // in DNS has to be addressed explicitly as host:port. Guessing a port would
@@ -97,7 +97,7 @@ func Discover(host string, res Resolver) (string, error) {
 // Via values reported by DiscoverDetail.
 const (
 	ViaExplicit = "explicit address" // host:port given as-is
-	ViaSRV      = "SRV record"       // _vireo._tcp.<host> answered
+	ViaSRV      = "SRV record"       // _frontdoor._tcp.<host> answered
 )
 
 // SystemResolver looks records up with the host resolver. Pass nil to Discover

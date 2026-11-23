@@ -73,7 +73,7 @@ func TestDiscoverWithoutRecordFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("a domain without an SRV record must not resolve")
 	}
-	if !strings.Contains(err.Error(), "_vireo._tcp.daemon.example.com") {
+	if !strings.Contains(err.Error(), "_frontdoor._tcp.daemon.example.com") {
 		t.Fatalf("error does not name the record: %v", err)
 	}
 	if !strings.Contains(err.Error(), "host:port") {

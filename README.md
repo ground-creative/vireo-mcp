@@ -5,7 +5,7 @@ one static binary that speaks **MCP** to an AI host (Claude Desktop, Cursor, VS
 Code, anything MCP) and the **vireo wire protocol** to a daemon.
 
 ```
-Claude Desktop ──MCP (stdio or HTTP)──▶ vireo-mcp ──vireo/1 (TLS/QUIC)──▶ vireo ──HTTP──▶ your backend
+Claude Desktop ──MCP (stdio or HTTP)──▶ vireo-mcp ──frontdoor/1 (TLS/QUIC)──▶ vireo ──HTTP──▶ your backend
 ```
 
 Install it once. Its tools let the assistant discover and talk to any vireo
@@ -37,7 +37,7 @@ with the agent's own words instead of a bare confirmation.
 ## Live demo
 
 The live endpoint is [ziwa.ai](https://ziwa.ai), found through
-`_vireo._tcp.ziwa.ai`. The flow, against an example business:
+`_frontdoor._tcp.ziwa.ai`. The flow, against an example business:
 
 ```
 connect acme-plumbing.example
@@ -402,11 +402,11 @@ easier.
 
 ## Talk to a daemon
 
-Domains resolve through their SRV record — `_vireo._tcp.<domain>` — and
+Domains resolve through their SRV record — `_frontdoor._tcp.<domain>` — and
 nothing else. A domain with no record must be addressed as `host:port`:
 
 ```
-_vireo._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
+_frontdoor._tcp.example.com. 300 IN SRV 10 5 7777 agent.example.com.
 ```
 
 ## Flags

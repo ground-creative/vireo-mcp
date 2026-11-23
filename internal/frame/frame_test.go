@@ -11,7 +11,7 @@ import (
 
 func TestRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
-	in := Frame{StreamID: 42, Type: 0x10, Payload: []byte(`{"protocol":"vireo/1"}`)}
+	in := Frame{StreamID: 42, Type: 0x10, Payload: []byte(`{"protocol":"frontdoor/1"}`)}
 	if err := Write(&buf, in); err != nil {
 		t.Fatalf("write: %v", err)
 	}
