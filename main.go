@@ -49,7 +49,7 @@ import (
 )
 
 const serverName = "vireo-mcp"
-const serverVersion = "0.7.0"
+const serverVersion = "0.8.0"
 const defaultProtocolVersion = "2024-11-05"
 
 // codeCancelled is the MCP error code for a request the receiver abandoned.
