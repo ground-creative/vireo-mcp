@@ -1,7 +1,7 @@
 package client
 
 // discovery_fallback_test.go covers PROTO-48: a client may fall back to the
-// retired _vireo._tcp record when _frontdoor._tcp does not resolve, and must
+// retired _vireo._tcp record when _portico._tcp does not resolve, and must
 // treat both as the same service.
 //
 // This was not hypothetical. The live deployment at ziwa.ai published only the
@@ -63,7 +63,7 @@ func TestDiscoverWithoutAnyRecordNamesBothRecords(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when neither record resolves")
 	}
-	for _, want := range []string{"_frontdoor._tcp", "_vireo._tcp"} {
+	for _, want := range []string{"_portico._tcp", "_vireo._tcp"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}

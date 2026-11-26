@@ -27,11 +27,11 @@ import (
 	"github.com/ground-creative/vireo-mcp/internal/protocol"
 )
 
-// SRVService and SRVProto form the lookup name: _frontdoor._tcp.<host>.
+// SRVService and SRVProto form the lookup name: _portico._tcp.<host>.
 // SRVServiceLegacy is the record this identifier replaced; PROTO-48 allows a
 // client to fall back to it, and requires both to name the same service.
 const (
-	SRVService       = "frontdoor"
+	SRVService       = "portico"
 	SRVServiceLegacy = "vireo"
 	SRVProto         = "tcp"
 )
@@ -92,7 +92,7 @@ type Resolver interface {
 // Discover resolves a hostname to a daemon address:
 //
 //  1. host already carries a port → used as-is, no lookup
-//  2. SRV lookup _frontdoor._tcp.<host> → host and port from the record
+//  2. SRV lookup _portico._tcp.<host> → host and port from the record
 //  3. SRV lookup _vireo._tcp.<host> → the retired record, still honoured
 //
 // There is no default port: an endpoint that is not published in DNS has to be
@@ -106,7 +106,7 @@ func Discover(host string, res Resolver) (string, error) {
 // Via values reported by DiscoverDetail.
 const (
 	ViaExplicit = "explicit address" // host:port given as-is
-	ViaSRV      = "SRV record"       // _frontdoor._tcp.<host> answered
+	ViaSRV      = "SRV record"       // _portico._tcp.<host> answered
 	// ViaSRVLegacy is the retired record. It is reported distinctly rather
 	// than folded into ViaSRV so the caller can say a deployment has not
 	// migrated, which is information, not an error (PROTO-48).
@@ -632,9 +632,12 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 	}
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: opts.Insecure,
-		NextProtos:         []string{protocol.Version},
-		ServerName:         host,
-		MinVersion:         tls.VersionTLS13,
+		// Every name the draft has used, newest first. A daemon that has not
+		// been redeployed since an earlier rename still completes the
+		// handshake, so a rename is not a flag day.
+		NextProtos: protocol.ALPNCandidates,
+		ServerName: host,
+		MinVersion: tls.VersionTLS13,
 	}
 	if opts.UseQUIC {
 		conn, err := quic.DialAddr(dctx, opts.Addr, tlsCfg, &quic.Config{MaxIdleTimeout: opts.Timeout})

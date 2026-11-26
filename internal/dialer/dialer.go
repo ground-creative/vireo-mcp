@@ -194,7 +194,7 @@ func (d *Dialer) Tools() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "discover",
-			"description": "Probe a domain for a vireo daemon without switching the current connection. Resolves the DNS SRV record _frontdoor._tcp.<host> and attempts a connection. Returns what the endpoint offers, or a clean \"no agent endpoint\" answer — which is information for deciding your next move, not an error.",
+			"description": "Probe a domain for a vireo daemon without switching the current connection. Resolves the DNS SRV record _portico._tcp.<host> and attempts a connection. Returns what the endpoint offers, or a clean \"no agent endpoint\" answer — which is information for deciding your next move, not an error.",
 			"inputSchema": obj(map[string]any{
 				"host": str("Domain to probe, e.g. example.com — or host:port for an explicit address."),
 			}, "host"),
@@ -203,7 +203,7 @@ func (d *Dialer) Tools() []map[string]any {
 			"name":        "connect",
 			"description": "Discover and connect to a vireo daemon (a business). Returns the list of agents — the things you can talk to there. Choose one with conversations or new_conversation.",
 			"inputSchema": obj(map[string]any{
-				"host": str("Hostname or host:port. A bare host is resolved through its _frontdoor._tcp SRV record."),
+				"host": str("Hostname or host:port. A bare host is resolved through its _portico._tcp SRV record."),
 			}, "host"),
 		},
 		{
@@ -378,7 +378,7 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 	}
 	b.WriteString("\nConnect with the connect tool to start working with it.")
 	if docErr == nil {
-		b.WriteString("\n\nThe manifest this endpoint publishes (frontdoor/1):\n")
+		b.WriteString("\n\nThe manifest this endpoint publishes (portico/1):\n")
 		if digestOK {
 			fmt.Fprintf(&b, "digest verified: %s\n", computed)
 		} else if computed != "" {
@@ -467,7 +467,7 @@ func (d *Dialer) appendManifestDocument(b *strings.Builder, c *client.Client) {
 		fmt.Fprintf(b, "\n\nManifest: unavailable (%v)", err)
 		return
 	}
-	b.WriteString("\n\nThe manifest this endpoint publishes (frontdoor/1). " +
+	b.WriteString("\n\nThe manifest this endpoint publishes (portico/1). " +
 		"This document is the contract: it is what the business declares about itself.\n")
 	if digestOK {
 		fmt.Fprintf(b, "digest verified: %s\n", computed)

@@ -60,7 +60,7 @@ func manifestDaemon(t *testing.T, document []byte) string {
 // happens to model.
 func TestManifestDocumentIsThePublishedBytes(t *testing.T) {
 	// Written with unusual member order and an extra member no struct declares.
-	document := []byte(`{"protocol":"frontdoor/1","endpoint":{"name":"test"},` +
+	document := []byte(`{"protocol":"portico/1","endpoint":{"name":"test"},` +
 		`"agents":[{"name":"a","sessions":false,"future_field":42}],` +
 		`"manifest_version":"1.3"}`)
 
@@ -97,7 +97,7 @@ func TestManifestDocumentIsThePublishedBytes(t *testing.T) {
 // A digest over the received bytes must match what the publisher computed, which
 // is only possible if the bytes are the published ones.
 func TestManifestDocumentDigestVerifies(t *testing.T) {
-	document := []byte(`{"manifest_version":"1.3","protocol":"frontdoor/1",` +
+	document := []byte(`{"manifest_version":"1.3","protocol":"portico/1",` +
 		`"endpoint":{"name":"Café 日本"},` +
 		`"agents":[{"name":"a","sessions":false}]}`)
 
