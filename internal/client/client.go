@@ -64,6 +64,11 @@ const turnStream uint32 = 1
 type Client struct {
 	opts     Options
 	manifest protocol.Manifest
+	// manifestRaw is the document exactly as the daemon sent it. It is kept
+	// because the manifest is the standard a caller reads, and a decoder that
+	// re-encodes a struct inserts members the business never wrote. Anything
+	// presented to a model, and any digest verification, must use these bytes.
+	manifestRaw json.RawMessage
 
 	// mu serialises round trips. The client uses stream id 1 for its own
 	// calls, so two concurrent calls on one connection would interleave.
@@ -184,7 +189,7 @@ func (c *Client) open(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", c.opts.Addr, err)
 	}
-	m, err := negotiate(rw, c.opts)
+	m, raw, err := negotiate(rw, c.opts)
 	if err != nil {
 		_ = rw.Close()
 		return err
@@ -194,6 +199,7 @@ func (c *Client) open(ctx context.Context) error {
 	c.rd = frame.NewReader(rw)
 	c.wmu.Unlock()
 	c.manifest = m
+	c.manifestRaw = raw
 	c.dials++
 	return nil
 }
@@ -226,6 +232,24 @@ func (c *Client) Dials() int {
 
 // Manifest returns the daemon's manifest as seen at Connect.
 func (c *Client) Manifest() protocol.Manifest { return c.manifest }
+
+// ManifestDocument returns the manifest exactly as the daemon sent it, along
+// with the digest this client computes over those bytes and whether it matches
+// the digest the document publishes.
+//
+// The document is what a caller is entitled to read before its first turn, so
+// a host adapter presents these bytes rather than a re-encoding: re-encoding a
+// struct inserts members the business never wrote and drops members this
+// adapter does not model, and the model then sees a document that is not the
+// standard's.
+func (c *Client) ManifestDocument() (raw []byte, computedDigest string, digestOK bool, err error) {
+	if len(c.manifestRaw) == 0 {
+		return nil, "", false, fmt.Errorf("client: no manifest captured")
+	}
+	raw = []byte(c.manifestRaw)
+	computedDigest, digestOK, err = protocol.VerifyDigest(raw)
+	return raw, computedDigest, digestOK, err
+}
 
 // Agents returns the agents the daemon fronts.
 func (c *Client) Agents() []protocol.AgentEntry { return c.manifest.Agents }
@@ -522,39 +546,39 @@ func (c *Client) roundTrip(ctx context.Context, typ uint8, req any, onDone func(
 	}
 }
 
-func negotiate(rw io.ReadWriteCloser, opts Options) (protocol.Manifest, error) {
+func negotiate(rw io.ReadWriteCloser, opts Options) (protocol.Manifest, json.RawMessage, error) {
 	arm(rw, opts.Timeout)
 	neg, _ := json.Marshal(protocol.NegotiateRequest{
 		Protocol: protocol.Version,
 		Client:   protocol.ClientInfo{ID: opts.ClientID, Name: opts.Name, Version: "0.4"},
 	})
 	if err := frame.Write(rw, frame.Frame{StreamID: 0, Type: protocol.TypeNegotiate, Payload: neg}); err != nil {
-		return protocol.Manifest{}, fmt.Errorf("send negotiate: %w", err)
+		return protocol.Manifest{}, nil, fmt.Errorf("send negotiate: %w", err)
 	}
 	rd := frame.NewReader(rw)
 	arm(rw, opts.Timeout)
 	f, err := rd.Read()
 	if err != nil {
-		return protocol.Manifest{}, fmt.Errorf("read manifest: %w", err)
+		return protocol.Manifest{}, nil, fmt.Errorf("read manifest: %w", err)
 	}
 	switch f.Type {
 	case protocol.TypeManifest:
 		var m protocol.Manifest
 		if err := json.Unmarshal(f.Payload, &m); err != nil {
-			return protocol.Manifest{}, err
+			return protocol.Manifest{}, nil, err
 		}
 		// The manifest is the contract: refuse a document that is not one rather
 		// than acting on a partial reading of it (MAN-47, MAN-48).
 		if err := m.ValidateAsClient(); err != nil {
-			return protocol.Manifest{}, fmt.Errorf("manifest rejected: %w", err)
+			return protocol.Manifest{}, nil, fmt.Errorf("manifest rejected: %w", err)
 		}
-		return m, nil
+		return m, json.RawMessage(f.Payload), nil
 	case protocol.TypeError:
 		var e protocol.ErrorPayload
 		_ = json.Unmarshal(f.Payload, &e)
-		return protocol.Manifest{}, &Error{Code: e.Code, Message: e.Message}
+		return protocol.Manifest{}, nil, &Error{Code: e.Code, Message: e.Message}
 	default:
-		return protocol.Manifest{}, fmt.Errorf("unexpected frame %s during handshake", protocol.TypeName(f.Type))
+		return protocol.Manifest{}, nil, fmt.Errorf("unexpected frame %s during handshake", protocol.TypeName(f.Type))
 	}
 }
 

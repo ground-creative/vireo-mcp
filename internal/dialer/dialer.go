@@ -245,6 +245,14 @@ func (d *Dialer) Tools() []map[string]any {
 				"agent": str("Agent name."),
 			}, "agent"),
 		},
+		{
+			"name": "manifest",
+			"description": "Return the manifest document the connected endpoint published, exactly as " +
+				"received, with its digest verified. This is the contract: what agents exist, which hold " +
+				"conversations, the advertised limits and capabilities, and the links the business " +
+				"publishes. Read it instead of guessing from the prose summary connect returns.",
+			"inputSchema": obj(map[string]any{}),
+		},
 	}
 }
 
@@ -272,6 +280,8 @@ func (d *Dialer) Handle(ctx context.Context, name string, args json.RawMessage) 
 		return d.toolSend(ctx, args)
 	case "close_conversation":
 		return d.toolClose(ctx, args)
+	case "manifest":
+		return d.toolManifest(ctx, args)
 	default:
 		return fmt.Sprintf("unknown tool %q", name), false
 	}
@@ -288,6 +298,31 @@ func (d *Dialer) Cancel() {
 }
 
 // ---- tools ----
+
+// toolManifest returns the published manifest document unmodified.
+//
+// connect already includes it, but a model that has been talking for a while
+// should be able to re-read the contract without reconnecting, and a host that
+// wants to show the document to a human needs an unmixed result.
+func (d *Dialer) toolManifest(ctx context.Context, args json.RawMessage) (string, bool) {
+	if d.conn == nil {
+		return "not connected — run connect first", false
+	}
+	raw, computed, digestOK, err := d.conn.ManifestDocument()
+	if err != nil {
+		return "cannot read the manifest: " + err.Error(), false
+	}
+	var b strings.Builder
+	if digestOK {
+		fmt.Fprintf(&b, "digest verified: %s\n", computed)
+	} else if computed != "" {
+		fmt.Fprintf(&b, "digest MISMATCH — computed %s; treat this document as altered\n", computed)
+	}
+	b.WriteString("```json\n")
+	b.Write(raw)
+	b.WriteString("\n```")
+	return b.String(), true
+}
 
 // toolDiscover probes a domain for a daemon. Both outcomes are answers:
 // "found, here's what it offers" and "no agent endpoint" return ok=true.
@@ -316,7 +351,8 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 	}
 	// The probe holds a live connection now, so release it: a probe must leave
 	// nothing open.
-	defer c.Close()
+	document, computed, digestOK, docErr := c.ManifestDocument()
+	c.Close()
 	m := c.Manifest()
 	var b strings.Builder
 	fmt.Fprintf(&b, "Agent endpoint found at %s (via %s): %q (%s).\nThings it offers:", in.Host, via, m.Endpoint.Name, m.Endpoint.ID)
@@ -341,6 +377,17 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 		}
 	}
 	b.WriteString("\nConnect with the connect tool to start working with it.")
+	if docErr == nil {
+		b.WriteString("\n\nThe manifest this endpoint publishes (frontdoor/1):\n")
+		if digestOK {
+			fmt.Fprintf(&b, "digest verified: %s\n", computed)
+		} else if computed != "" {
+			fmt.Fprintf(&b, "digest MISMATCH — computed %s; treat this document as altered\n", computed)
+		}
+		b.WriteString("```json\n")
+		b.Write(document)
+		b.WriteString("\n```")
+	}
 	return b.String(), true
 }
 
@@ -403,7 +450,33 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 		}
 	}
 	b.WriteString("\nStart with conversations {agent} or new_conversation {agent}, then send_message.")
+	d.appendManifestDocument(&b, c)
 	return b.String(), true
+}
+
+// appendManifestDocument adds the manifest itself to a tool result.
+//
+// The prose above orients a model; the document is the standard. Without this
+// the adapter is the only thing that ever reads the manifest, and it reads it
+// into a summary — so the artifact the specification defines never reaches the
+// party it was written for. The bytes are appended verbatim (MAN-59), not a
+// re-encoding, so what the model sees is what the business published.
+func (d *Dialer) appendManifestDocument(b *strings.Builder, c *client.Client) {
+	raw, computed, digestOK, err := c.ManifestDocument()
+	if err != nil {
+		fmt.Fprintf(b, "\n\nManifest: unavailable (%v)", err)
+		return
+	}
+	b.WriteString("\n\nThe manifest this endpoint publishes (frontdoor/1). " +
+		"This document is the contract: it is what the business declares about itself.\n")
+	if digestOK {
+		fmt.Fprintf(b, "digest verified: %s\n", computed)
+	} else if computed != "" {
+		fmt.Fprintf(b, "digest MISMATCH — computed %s; treat this document as altered\n", computed)
+	}
+	b.WriteString("```json\n")
+	b.Write(raw)
+	b.WriteString("\n```")
 }
 
 func (d *Dialer) toolConversations(ctx context.Context, args json.RawMessage) (string, bool) {
