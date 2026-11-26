@@ -7,14 +7,23 @@ import (
 )
 
 // fakeResolver answers SRV lookups from a table.
+//
+// records is keyed by the queried name, which is enough when only one service
+// is under test. byService is keyed by the service label instead, so a test can
+// say that _frontdoor does not resolve while _vireo does — the difference
+// PROTO-48 is about.
 type fakeResolver struct {
-	records map[string][]*net.SRV
-	err     error
+	records   map[string][]*net.SRV
+	byService map[string][]*net.SRV
+	err       error
 }
 
 func (f *fakeResolver) LookupSRV(service, proto, name string) (string, []*net.SRV, error) {
 	if f.err != nil {
 		return "", nil, f.err
+	}
+	if f.byService != nil {
+		return "", f.byService[service], nil
 	}
 	return "", f.records[name], nil
 }

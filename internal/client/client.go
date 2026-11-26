@@ -28,9 +28,12 @@ import (
 )
 
 // SRVService and SRVProto form the lookup name: _frontdoor._tcp.<host>.
+// SRVServiceLegacy is the record this identifier replaced; PROTO-48 allows a
+// client to fall back to it, and requires both to name the same service.
 const (
-	SRVService = "frontdoor"
-	SRVProto   = "tcp"
+	SRVService       = "frontdoor"
+	SRVServiceLegacy = "vireo"
+	SRVProto         = "tcp"
 )
 
 // Options configures a client for one daemon.
@@ -90,10 +93,11 @@ type Resolver interface {
 //
 //  1. host already carries a port → used as-is, no lookup
 //  2. SRV lookup _frontdoor._tcp.<host> → host and port from the record
+//  3. SRV lookup _vireo._tcp.<host> → the retired record, still honoured
 //
-// There is no default port and no fallback: an endpoint that is not published
-// in DNS has to be addressed explicitly as host:port. Guessing a port would
-// make a typo in a hostname look like a daemon that is down.
+// There is no default port: an endpoint that is not published in DNS has to be
+// addressed explicitly as host:port. Guessing a port would make a typo in a
+// hostname look like a daemon that is down.
 func Discover(host string, res Resolver) (string, error) {
 	addr, _, err := DiscoverDetail(host, res)
 	return addr, err
@@ -103,6 +107,10 @@ func Discover(host string, res Resolver) (string, error) {
 const (
 	ViaExplicit = "explicit address" // host:port given as-is
 	ViaSRV      = "SRV record"       // _frontdoor._tcp.<host> answered
+	// ViaSRVLegacy is the retired record. It is reported distinctly rather
+	// than folded into ViaSRV so the caller can say a deployment has not
+	// migrated, which is information, not an error (PROTO-48).
+	ViaSRVLegacy = "SRV record (retired _vireo._tcp)"
 )
 
 // SystemResolver looks records up with the host resolver. Pass nil to Discover
@@ -111,7 +119,7 @@ var SystemResolver Resolver = systemResolver{}
 
 type systemResolver struct{}
 
-func (systemResolver) LookupSRV(service, proto, name string) (string, []*net.SRV, error) {
+func (systemResolver) LookupSRV(service, proto, name string) (cname string, addrs []*net.SRV, err error) {
 	return net.DefaultResolver.LookupSRV(context.Background(), service, proto, name)
 }
 
@@ -132,7 +140,18 @@ func DiscoverDetail(host string, res Resolver) (addr, via string, err error) {
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
 		host = host[1 : len(host)-1]
 	}
-	if _, addrs, lerr := res.LookupSRV(SRVService, SRVProto, host); lerr == nil && len(addrs) > 0 {
+	// The published identifier first, then the retired one. PROTO-48 permits
+	// the fallback and requires both to be treated as the same service, which
+	// matters while deployments are still migrating: without it, a client that
+	// follows the current spec cannot reach a daemon that has not moved yet.
+	for _, candidate := range []struct{ service, via string }{
+		{SRVService, ViaSRV},
+		{SRVServiceLegacy, ViaSRVLegacy},
+	} {
+		_, addrs, lerr := res.LookupSRV(candidate.service, SRVProto, host)
+		if lerr != nil || len(addrs) == 0 {
+			continue
+		}
 		// Pick the highest-priority record (lowest value); ties broken by
 		// the resolver's ordering.
 		best := addrs[0]
@@ -142,10 +161,10 @@ func DiscoverDetail(host string, res Resolver) (addr, via string, err error) {
 			}
 		}
 		target := strings.TrimSuffix(best.Target, ".")
-		return net.JoinHostPort(target, strconv.Itoa(int(best.Port))), ViaSRV, nil
+		return net.JoinHostPort(target, strconv.Itoa(int(best.Port))), candidate.via, nil
 	}
-	return "", "", fmt.Errorf("no SRV record _%s._%s.%s — connect with an explicit host:port instead",
-		SRVService, SRVProto, host)
+	return "", "", fmt.Errorf("no SRV record _%s._%s.%s (or retired _%s._%s) — connect with an explicit host:port instead",
+		SRVService, SRVProto, host, SRVServiceLegacy, SRVProto)
 }
 
 // DiscoverTarget is DiscoverDetail plus the name the certificate must cover.
