@@ -12,10 +12,12 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +52,13 @@ type Options struct {
 	Timeout  time.Duration
 	Insecure bool // skip TLS verification; unsafe, local development only (SEC-6, SEC-7)
 	UseQUIC  bool
+
+	// CAFile names a PEM bundle to trust for this connection, in addition to
+	// the system roots. It is the correct way to reach a daemon whose
+	// certificate is self-signed (scripts/gen-certs.sh) without weakening the
+	// check: the peer must still present a certificate that this CA signed and
+	// that covers ServerName. Prefer this over Insecure for local development.
+	CAFile string
 
 	// OnPartial receives progress the agent sends while it is still working
 	// ("hold on…"). It is called from the reading goroutine and may be nil.
@@ -639,6 +648,15 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 		ServerName: host,
 		MinVersion: tls.VersionTLS13,
 	}
+	// A trust bundle adds to verification; it never replaces it. The peer must
+	// still chain to one of these roots and match ServerName.
+	if opts.CAFile != "" {
+		pool, err := rootPool(opts.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.RootCAs = pool
+	}
 	if opts.UseQUIC {
 		conn, err := quic.DialAddr(dctx, opts.Addr, tlsCfg, &quic.Config{MaxIdleTimeout: opts.Timeout})
 		if err != nil {
@@ -668,8 +686,32 @@ func verificationHint(err error, opts Options) error {
 	if opts.Insecure {
 		return err
 	}
+	if opts.CAFile != "" {
+		// The operator already pointed at a trust bundle, so the useful advice
+		// is that the certificate did not chain to it or does not cover the
+		// name — not a recommendation to stop verifying.
+		return fmt.Errorf("%w\ncertificate verification failed for %q using %s; the daemon's certificate must be signed by a CA in that file and cover that name", err, opts.Addr, opts.CAFile)
+	}
 	return fmt.Errorf("%w\ncertificate verification failed for %q; a development certificate is not trusted by the system. "+
-		"Pass -insecure to skip verification, which is unsafe and only for local development", err, opts.Addr)
+		"Pass -ca <certs/cert.pem> to trust it (verification stays on), or -insecure to skip verification, which is unsafe and only for local development", err, opts.Addr)
+}
+
+// rootPool builds a certificate pool from a PEM bundle. The system roots are
+// kept, so a bundle is additive: a deployment with a public certificate is
+// unaffected by a CAFile that happens to be set.
+func rootPool(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read CA file %s: %w", path, err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("CA file %s: no PEM certificate found", path)
+	}
+	return pool, nil
 }
 
 func arm(rw io.ReadWriteCloser, d time.Duration) {

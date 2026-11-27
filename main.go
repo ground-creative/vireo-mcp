@@ -64,6 +64,7 @@ var (
 func main() {
 	label := flag.String("name", "default", "label for this installation, e.g. claude-desktop (display only; the id is generated)")
 	insecure := flag.Bool("insecure", false, "skip daemon TLS verification (UNSAFE; local development only)")
+	caFile := flag.String("ca", "", "PEM bundle to trust for this daemon, e.g. certs/cert.pem (verification stays on)")
 	timeout := flag.Duration("timeout", 120*time.Second, "per-request timeout toward the daemon")
 	httpAddr := flag.String("http-addr", "", "serve MCP over Streamable HTTP on this address instead of stdio, e.g. 127.0.0.1:8081")
 	issueToken := flag.Bool("issue-token", false, "mint a new authorization token for the HTTP transport and print it")
@@ -129,7 +130,7 @@ func main() {
 	}
 	s.newDialer = func(id string) *dialer.Dialer {
 		return dialer.New(dialer.Options{
-			ClientID: id, Name: *label, Insecure: *insecure, Timeout: *timeout,
+			ClientID: id, Name: *label, Insecure: *insecure, CAFile: *caFile, Timeout: *timeout,
 			// Mid-turn progress becomes notifications/progress, so a host can
 			// show "hold on" while a tool call is still running.
 			OnPartial: s.notifyProgress,

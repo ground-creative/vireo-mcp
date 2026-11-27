@@ -31,6 +31,7 @@ type Options struct {
 	ClientID string        // unique identity toward the daemon (never typed)
 	Name     string        // human label, display only
 	Insecure bool          // skip TLS verification (dev)
+	CAFile   string        // PEM bundle to trust in addition to the system roots
 	Timeout  time.Duration // per-request timeout
 
 	// OnPartial receives the progress lines an agent sends mid-turn. In an MCP
@@ -344,6 +345,7 @@ func (d *Dialer) toolDiscover(ctx context.Context, args json.RawMessage) (string
 		Name:       d.displayName() + " (probe)",
 		Timeout:    d.opts.Timeout,
 		Insecure:   d.opts.Insecure,
+		CAFile:     d.opts.CAFile,
 	})
 	if err != nil {
 		return fmt.Sprintf("No agent endpoint at %s (tried %s, via %s): %v\nThe domain does not run a vireo daemon — or it is down.",
@@ -409,6 +411,7 @@ func (d *Dialer) toolConnect(ctx context.Context, args json.RawMessage) (string,
 		Name:       d.displayName(),
 		Timeout:    d.opts.Timeout,
 		Insecure:   d.opts.Insecure,
+		CAFile:     d.opts.CAFile,
 		OnPartial: func(p protocol.PartialPayload) {
 			if d.opts.OnPartial != nil && strings.TrimSpace(p.Text) != "" {
 				d.opts.OnPartial(strings.TrimSpace(p.Text))
