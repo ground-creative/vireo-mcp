@@ -49,14 +49,23 @@ import (
 )
 
 const serverName = "vireo-mcp"
-const serverVersion = "0.8.0"
 const defaultProtocolVersion = "2024-11-05"
 
 // codeCancelled is the MCP error code for a request the receiver abandoned.
 const codeCancelled = -32800
 
-// Injected at build time: -ldflags "-X main.buildCommit=... -X main.buildTime=..."
+// Version metadata. version has a default so `go install` and a plain
+// `go build` report something sensible; a release build overrides all three
+// with -ldflags and no other line in the program changes:
+//
+//	go build -ldflags "-X main.version=0.9.0 \
+//	  -X main.buildCommit=$(git rev-parse --short HEAD) \
+//	  -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// Only the Go toolchain injects these — no generated file, no extra dependency,
+// and a build with no flags still works.
 var (
+	version     = "0.8.0" // release builds override this
 	buildCommit = "dev"
 	buildTime   = "unknown"
 )
@@ -72,11 +81,14 @@ func main() {
 	trace := flag.String("log", "", "write a JSON-RPC trace to this file, or - for stderr")
 	showTools := flag.Bool("tools", false, "print the tool catalog as JSON and exit")
 	showRoutes := flag.Bool("routes", false, "print the transport/route table and exit")
-	showVersion := flag.Bool("version", false, "print name and version, then exit")
+	showVersion := flag.Bool("version", false, "print name, version and build, then exit")
 	flag.Parse()
 
+	// -version is the first thing a bug report needs, so it prints the build
+	// identity on one line: version, commit, build time. The first two fields
+	// stay machine-readable for scripts (`vireo-mcp -version | cut -d' ' -f2`).
 	if *showVersion {
-		fmt.Printf("%s %s\n", serverName, serverVersion)
+		fmt.Printf("%s %s (commit %s, built %s)\n", serverName, version, buildCommit, buildTime)
 		return
 	}
 	if *showRoutes {
@@ -139,7 +151,9 @@ func main() {
 	s.d = s.newDialer(clientID)
 
 	if *showTools {
-		b, err := json.MarshalIndent(s.d.Tools(), "", "  ")
+		// The full catalogue, exactly as tools/list serves it — including the
+		// server's own `about` tool, which is not part of the dialer's set.
+		b, err := json.MarshalIndent(s.tools(s.d), "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", serverName, err)
 			os.Exit(1)
@@ -162,7 +176,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "%s %s — MCP client instance %q\n", serverName, serverVersion, clientID)
+	fmt.Fprintf(os.Stderr, "%s %s — MCP client instance %q\n", serverName, version, clientID)
 
 	if *httpAddr != "" {
 		entry, err := registry.Ensure(*label)
@@ -382,7 +396,7 @@ func routes() []route {
 		{"mcp", "initialize", "-", "dispatch", "protocolVersion, capabilities.tools, serverInfo"},
 		{"mcp", "notifications/initialized", "-", "dispatch", "notification — no reply"},
 		{"mcp", "ping", "-", "dispatch", "empty result"},
-		{"mcp", "tools/list", "-", "dispatch", "the 7 tools with JSON Schemas"},
+		{"mcp", "tools/list", "-", "dispatch", "the 9 tools with JSON Schemas (8 from the dialer + about)"},
 		{"mcp", "tools/call", "-", "dispatch → handleToolsCall", "runs one tool, returns text content + isError"},
 		{"mcp", "prompts/list", "-", "dispatch", "empty list (capability not advertised)"},
 		{"mcp", "resources/list", "-", "dispatch", "empty list (capability not advertised)"},
@@ -421,14 +435,14 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	registered, live := s.callerCount()
 	fmt.Fprintf(w, `{"ok":true,"server":%q,"version":%q,"client_id":%q,"callers_registered":%d,"callers_live":%d}`+"\n",
-		serverName, serverVersion, s.baseID, registered, live)
+		serverName, version, s.baseID, registered, live)
 }
 
 func (s *server) handleRoutesJSON(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(map[string]any{"server": serverName, "version": serverVersion, "routes": routes()})
+	_ = enc.Encode(map[string]any{"server": serverName, "version": version, "routes": routes()})
 }
 
 // handleDashboard renders the observable view: what this process answers, and
@@ -458,7 +472,7 @@ func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 <div class="dim">MCP client instance %s</div>
 <h2>What this process answers</h2>
 <table><tr><th>transport</th><th>method</th><th>route</th><th>handler</th><th>notes</th></tr>`,
-		serverName, serverName, serverVersion, html.EscapeString(s.baseID))
+		serverName, serverName, version, html.EscapeString(s.baseID))
 
 	for _, rt := range routes() {
 		fmt.Fprintf(w, `<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="dim">%s</td></tr>`,
@@ -538,7 +552,7 @@ func (s *server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, ": connected to %s %s\n\n", serverName, serverVersion)
+		fmt.Fprintf(w, ": connected to %s %s\n\n", serverName, version)
 		flusher.Flush()
 		<-r.Context().Done()
 
@@ -628,7 +642,7 @@ func (s *server) dispatch(d *dialer.Dialer, msg rpcMessage) string {
 		return respond(msg.ID, map[string]any{
 			"protocolVersion": negotiateProtocolVersion(msg.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": serverName, "version": serverVersion},
+			"serverInfo":      map[string]any{"name": serverName, "version": version},
 		})
 
 	case "ping":
@@ -677,7 +691,7 @@ func (s *server) about(d *dialer.Dialer) string {
 		agent = "-"
 	}
 	return fmt.Sprintf("%s %s\nbuild: %s (%s)\nMCP protocol: %s\ncaller identity: %s\nlabel: %q\ndaemon: %s\ncallers: %d registered, %d live",
-		serverName, serverVersion, buildCommit, buildTime, defaultProtocolVersion,
+		serverName, version, buildCommit, buildTime, defaultProtocolVersion,
 		d.ClientID(), s.name, link, registered, live)
 }
 

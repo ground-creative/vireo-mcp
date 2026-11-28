@@ -1,2 +1,7 @@
 # built from the repo root
 /vireo-mcp
+/vireo-mcp.exe
+
+# cross-platform release output (scripts/release.sh, make release)
+/dist/
+

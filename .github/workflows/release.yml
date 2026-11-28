@@ -1,0 +1,245 @@
+name: release
+
+# Two ways in:
+#
+#   push a v* tag        → build, test, package, and publish a GitHub Release
+#   run it by hand       → the same build and test, artifacts uploaded to the
+#                          run, but nothing is published
+#
+# Manual execution exists so the workflow can be proved before it is trusted
+# with a tag. The `publish` input defaults to false; setting it to true on a
+# manual run does NOT publish either — only a v* tag does, so a mis-click
+# cannot create a release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the binary (default: dev)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write # needed only to create the release on a tag push
+
+env:
+  GO_VERSION: "1.22"
+
+jobs:
+  # Everything that can fail before a byte is published. Kept as its own job so
+  # a broken test never reaches the packaging step, and so the failure is
+  # visible as "tests" rather than as a mysterious missing artifact.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 -race ./...
+
+      - name: go build
+        run: go build ./...
+
+  # One runner builds every target: the bridge is pure Go (CGO_ENABLED=0), so
+  # GOOS/GOARCH cross-compilation produces exactly what a native build would.
+  # If a dependency ever needs cgo this job has to become a matrix over native
+  # runners — see scripts/release.sh.
+  package:
+    name: package
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git describe needs the tag
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # A tag build derives its version from the tag; a manual run uses the
+      # input, which defaults to "dev" so a test build cannot masquerade as a
+      # release.
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="${INPUT_VERSION:-dev}"
+          fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+          echo "resolved version: ${version}"
+
+      - name: Build and package
+        run: ./scripts/release.sh "${{ steps.version.outputs.value }}" dist
+
+      - name: Verify artifact names
+        run: |
+          # The names are a public interface: a download link and an install
+          # script both depend on them. A silent rename is the failure this
+          # catches.
+          expected="
+          vireo-mcp-darwin-arm64.tar.gz
+          vireo-mcp-darwin-amd64.tar.gz
+          vireo-mcp-windows-amd64.zip
+          vireo-mcp-linux-amd64.tar.gz
+          vireo-mcp-linux-arm64.tar.gz
+          checksums.txt
+          "
+          for f in $expected; do
+            if [ ! -f "dist/$f" ]; then
+              echo "missing artifact: dist/$f" >&2
+              ls -la dist >&2
+              exit 1
+            fi
+          done
+          # Nothing unexpected either: a stray file would not be published, but
+          # it means the script does something nobody asked for.
+          count="$(ls -1 dist | wc -l)"
+          if [ "$count" -ne 6 ]; then
+            echo "expected 6 files in dist, found $count:" >&2
+            ls -la dist >&2
+            exit 1
+          fi
+
+      - name: Verify checksums
+        run: cd dist && sha256sum -c checksums.txt
+
+      - name: Verify executable bit inside archives
+        run: |
+          # "extract and run" on macOS and Linux depends on this bit surviving
+          # the archive. A tarball built on Windows or with the wrong flags
+          # loses it and every Linux user has to chmod by hand.
+          for f in dist/vireo-mcp-linux-*.tar.gz dist/vireo-mcp-darwin-*.tar.gz; do
+            mode="$(tar -tvzf "$f" | awk '$NF ~ /vireo-mcp$/ {print $1}')"
+            case "$mode" in
+              -rwx*) echo "ok   $(basename "$f"): $mode" ;;
+              *)     echo "FAIL $(basename "$f"): mode $mode is not executable" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Verify each binary is the promised platform
+        run: |
+          # Compilation success is not execution. These checks confirm the file
+          # is what its name claims; only linux/amd64 and linux/arm64 (via
+          # qemu) can actually be run on this runner, and only linux/amd64
+          # natively.
+          work="$(mktemp -d)"
+          check() {
+            archive="$1"; pattern="$2"; label="$3"
+            dir="$work/$(basename "$archive")"
+            mkdir -p "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" -d "$dir" ;;
+              *)     tar -xzf "$archive" -C "$dir" ;;
+            esac
+            binary="$(find "$dir" -maxdepth 1 -type f -name 'vireo-mcp*')"
+            desc="$(file -b "$binary")"
+            case "$desc" in
+              $pattern) echo "ok   $label: $desc" ;;
+              *) echo "FAIL $label: expected $pattern, got: $desc" >&2; exit 1 ;;
+            esac
+          }
+          check dist/vireo-mcp-darwin-arm64.tar.gz "Mach-O 64-bit arm64*" "darwin/arm64"
+          check dist/vireo-mcp-darwin-amd64.tar.gz "Mach-O 64-bit x86_64*" "darwin/amd64"
+          check dist/vireo-mcp-linux-amd64.tar.gz "ELF 64-bit LSB *x86-64*" "linux/amd64"
+          check dist/vireo-mcp-linux-arm64.tar.gz "ELF 64-bit LSB *ARM aarch64*" "linux/arm64"
+
+      # The only architecture this runner can execute natively. Darwin and
+      # Windows binaries are compile-verified above and never run here — a
+      # green run does not claim they were tested on their target OS.
+      - name: Smoke test linux/amd64
+        run: |
+          dir="$(mktemp -d)"
+          tar -xzf dist/vireo-mcp-linux-amd64.tar.gz -C "$dir"
+          chmod +x "$dir/vireo-mcp"
+
+          echo "--- -version"
+          "$dir/vireo-mcp" -version
+
+          echo "--- -tools (must list 9 tools)"
+          "$dir/vireo-mcp" -tools > "$dir/tools.json"
+          count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$dir/tools.json")"
+          [ "$count" -eq 9 ] || { echo "tools = $count, want 9" >&2; exit 1; }
+          echo "tools: $count"
+
+          echo "--- -routes"
+          "$dir/vireo-mcp" -routes > /dev/null
+
+          echo "--- stdio handshake answered by the packaged binary"
+          # Proves the shipped executable speaks the MCP the host expects, with
+          # no build tree present.
+          out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | "$dir/vireo-mcp" 2>/dev/null)"
+          echo "$out" | grep -q '"serverInfo"' || { echo "no initialize response: $out" >&2; exit 1; }
+          echo "$out" | grep -q '"name":"connect"' || { echo "tools/list did not include connect" >&2; exit 1; }
+          echo "handshake ok"
+
+      - name: Upload build artifacts (every run)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vireo-mcp-${{ steps.version.outputs.value }}
+          path: dist/
+          retention-days: 14
+
+      # Publishing happens here and nowhere else: a tag push, after every check
+      # above has passed. A manual run stops at the artifact upload.
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists — uploading assets to it" >&2
+            gh release upload "$tag" dist/* --clobber
+          else
+            # --generate-notes produces the changelog from the tag range;
+            # --verify-tag makes a missing tag a failure instead of a surprise
+            # release created on the default branch.
+            gh release create "$tag" dist/* \
+              --title "$tag" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### vireo-mcp ${{ steps.version.outputs.value }}"
+            echo
+            echo "| platform | artifact |"
+            echo "| --- | --- |"
+            for f in dist/*.tar.gz dist/*.zip; do
+              [ -f "$f" ] && echo "| $(basename "$f" .tar.gz | sed 's/\.zip$//' | sed 's/^vireo-mcp-//') | \`$(basename "$f")\` |"
+            done
+            echo
+            echo "Executed on this runner: linux/amd64 only."
+            echo "darwin/arm64, darwin/amd64, windows/amd64 and linux/arm64 are"
+            echo "compile-verified and file-type checked, not run on their target OS."
+          } >> "$GITHUB_STEP_SUMMARY"
