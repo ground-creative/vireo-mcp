@@ -19,14 +19,14 @@ configuration, and no Go toolchain if you use a release binary.
 
 **Start here:**
 
-| If you want to…                                            | Go to                                                                 |
-| ---------------------------------------------------------- | --------------------------------------------------------------------- |
-| talk to a real endpoint in five minutes                     | [Try the live endpoint](#1-try-the-live-endpoint)                     |
-| point the bridge at your own domain                         | [Connect to your own endpoint](#2-connect-to-your-own-portico-endpoint) |
-| understand how the pieces fit                               | [Architecture](#3-architecture)                                       |
-| see an existing agent runtime exposed without rewriting it  | [Backend integration](#4-backend-integration-an-existing-agent-runtime) |
-| fix something that is not working                           | [Troubleshooting](#troubleshooting)                                   |
-| send a patch                                                | [Contributing](#contributing)                                         |
+| If you want to…                                            | Go to                                                                   |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------- |
+| talk to a real endpoint in five minutes                    | [Try the live endpoint](#1-try-the-live-endpoint)                       |
+| point the bridge at your own domain                        | [Connect to your own endpoint](#2-connect-to-your-own-portico-endpoint) |
+| understand how the pieces fit                              | [Architecture](#3-architecture)                                         |
+| see an existing agent runtime exposed without rewriting it | [Backend integration](#4-backend-integration-an-existing-agent-runtime) |
+| fix something that is not working                          | [Troubleshooting](#troubleshooting)                                     |
+| send a patch                                               | [Contributing](#contributing)                                           |
 
 ## Contents
 
@@ -59,10 +59,10 @@ _portico._tcp.ziwa.ai.  300 IN SRV 10 5 7778 vireo.ziwa.ai.
 
 The endpoint publishes two agents, both conversational:
 
-| Agent                  | What it is for                                                                                        | Greeting                                           |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `sales-representative` | Chat with Martin, our Solutions Advisor, about our IT services, tech stack, or booking a consultation. | "Hi, I'm Martin! …"                                |
-| `vireo-representative` | Discuss Vireo, its architecture, design decisions and AI agent interoperability.                      | "Hi! I'm Vireo's AI representative. …"             |
+| Agent                  | What it is for                                                                                         | Greeting                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| `sales-representative` | Chat with Martin, our Solutions Advisor, about our IT services, tech stack, or booking a consultation. | "Hi, I'm Martin! …"                    |
+| `vireo-representative` | Discuss Vireo, its architecture, design decisions and AI agent interoperability.                       | "Hi! I'm Vireo's AI representative. …" |
 
 Both hold multi-turn conversations. The endpoint advertises 60 requests/minute
 with a burst of 10, and 30/minute with a burst of 5 for `sales-representative`
@@ -70,7 +70,7 @@ specifically.
 
 **What is public and what is not.** Discovery, the manifest and conversations on
 `ziwa.ai` are open to anyone who can reach the daemon — there is no API key and no
-account. That is a property of *this deployment*, not of Portico: an independently
+account. That is a property of _this deployment_, not of Portico: an independently
 operated endpoint may require a client credential, and this bridge does not
 currently carry one (see [known limitations](#known-limitations)). The bridge's own
 bearer tokens authenticate an **MCP host to the bridge over HTTP** — they have
@@ -90,13 +90,16 @@ Check that it runs before wiring anything up:
 
 ```bash
 vireo-mcp -version
-# release binary:  vireo-mcp 0.9.0 (commit a1b2c3d, built 2026-11-28T01:45:43Z)
-# go install:      vireo-mcp 0.8.0 (commit dev, built unknown)
+# release archive:  vireo-mcp 0.9.0 (commit a1b2c3d, built 2026-11-28T01:45:43Z)
+# go install @tag:  vireo-mcp 0.9.0 (commit dev, built unknown)
+# go build locally: vireo-mcp dev (commit a1b2c3d, built 2026-11-28T01:45:43Z)
 ```
 
-`go install` and a plain `go build` carry no build stamps, so `dev` / `unknown`
-there is expected — a release archive is the only place the commit and build time
-are filled in.
+The version is never hardcoded: a release archive is stamped with `-ldflags`, a
+`go install module@v0.9.0` reads the module version the toolchain recorded, and a
+local `go build` reads the git revision. `dev` with a commit means "built from a
+checkout", not "unknown build" — and `dev`/`unknown` means the toolchain recorded
+no metadata at all.
 
 ### Step 2 — register it with your host
 
@@ -126,7 +129,7 @@ Ask the assistant, in your own words, to connect to `ziwa.ai`. The tool call it
 makes is `connect`:
 
 ```json
-{"name": "connect", "arguments": {"host": "ziwa.ai"}}
+{ "name": "connect", "arguments": { "host": "ziwa.ai" } }
 ```
 
 The bridge resolves `_portico._tcp.ziwa.ai`, opens a TLS connection to
@@ -157,7 +160,7 @@ is what you want when checking a domain you are not committing to.
 A conversational agent needs a conversation before it can be messaged:
 
 ```json
-{"name": "new_conversation", "arguments": {"agent": "vireo-representative"}}
+{ "name": "new_conversation", "arguments": { "agent": "vireo-representative" } }
 ```
 
 ```
@@ -173,7 +176,7 @@ and will not repeat it.
 Use `conversations` first if you want to know what you were already discussing:
 
 ```json
-{"name": "conversations", "arguments": {"agent": "vireo-representative"}}
+{ "name": "conversations", "arguments": { "agent": "vireo-representative" } }
 ```
 
 ```
@@ -185,7 +188,10 @@ Resume with resume_conversation {number} or {latest}, or start fresh with new_co
 ### Step 5 — send messages
 
 ```json
-{"name": "send_message", "arguments": {"message": "What is Portico in one sentence?"}}
+{
+  "name": "send_message",
+  "arguments": { "message": "What is Portico in one sentence?" }
+}
 ```
 
 ```
@@ -279,7 +285,7 @@ certificate from the daemon's `scripts/gen-certs.sh` that no public CA chains to
 Two answers, depending on how long the setting should live.
 
 **`-ca`, for anything that might outlive the test.** It trusts one PEM bundle and
-keeps verification on: the peer must still be signed by that bundle *and* cover the
+keeps verification on: the peer must still be signed by that bundle _and_ cover the
 name you asked for.
 
 ```json
@@ -296,13 +302,13 @@ name you asked for.
 System roots are kept, so `-ca` is additive, never a replacement. Restart the
 bridge after `gen-certs.sh` regenerates the file — the bundle is read at startup.
 `SSL_CERT_FILE` also works, because Go reads it as the root bundle, but it
-*replaces* the system roots for the whole process; prefer `-ca`.
+_replaces_ the system roots for the whole process; prefer `-ca`.
 
 **`-insecure`, for a disposable local run only.** It turns verification off: the
 traffic is still encrypted, but nothing establishes who answered the call.
 
 ```json
-{"args": ["-insecure"]}
+{ "args": ["-insecure"] }
 ```
 
 A deployment with a public certificate needs no flag at all.
@@ -355,12 +361,12 @@ exposes.
 
 Four things, and keeping them apart is the point:
 
-| Layer                     | What it is                                                                                   | Where |
-| ------------------------- | -------------------------------------------------------------------------------------------- | ----- |
-| **Agent Front Door**      | The open specification: the problem, the manifest, the conformance ladder.                    | [agent-front-door-spec](https://github.com/ground-creative/agent-front-door-spec) |
-| **Portico (`portico/1`)** | The wire protocol: framing, handshake, manifest, sessions, messages, progress, cancellation.  | [`normative/PROTOCOL.md`](https://github.com/ground-creative/agent-front-door-spec/blob/main/normative/PROTOCOL.md) |
-| **Vireo**                 | The Go reference daemon that serves a domain's endpoint.                                      | [ground-creative/vireo](https://github.com/ground-creative/vireo) |
-| **vireo-mcp** (this repo) | The adapter between an MCP host and a Portico endpoint.                                       | here |
+| Layer                     | What it is                                                                                   | Where                                                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Agent Front Door**      | The open specification: the problem, the manifest, the conformance ladder.                   | [agent-front-door-spec](https://github.com/ground-creative/agent-front-door-spec)                                   |
+| **Portico (`portico/1`)** | The wire protocol: framing, handshake, manifest, sessions, messages, progress, cancellation. | [`normative/PROTOCOL.md`](https://github.com/ground-creative/agent-front-door-spec/blob/main/normative/PROTOCOL.md) |
+| **Vireo**                 | The Go reference daemon that serves a domain's endpoint.                                     | [ground-creative/vireo](https://github.com/ground-creative/vireo)                                                   |
+| **vireo-mcp** (this repo) | The adapter between an MCP host and a Portico endpoint.                                      | here                                                                                                                |
 
 ```text
         AI host  (Claude Desktop · Cursor · VS Code · any MCP host)
@@ -408,7 +414,7 @@ What follows from the split:
 This is worth stating precisely, because it is the easiest thing to get backwards.
 
 `vireo-mcp` is **not** an OpenClaw adapter. It never sees OpenClaw, and OpenClaw
-never sees MCP. The OpenClaw integration sits on the *other* side of the daemon, as
+never sees MCP. The OpenClaw integration sits on the _other_ side of the daemon, as
 a **backend adapter** — an HTTP server that answers vireo's webhook by calling an
 OpenClaw gateway:
 
@@ -491,11 +497,11 @@ Point the host at it, doubling the backslashes because JSON escapes them:
 no Developer ID certificate and no Authenticode signature behind them, so both
 platforms warn:
 
-- **macOS Gatekeeper** reports *"vireo-mcp" cannot be opened because the developer
-  cannot be verified*. Clear it for this one binary with
+- **macOS Gatekeeper** reports _"vireo-mcp" cannot be opened because the developer
+  cannot be verified_. Clear it for this one binary with
   `xattr -d com.apple.quarantine ./vireo-mcp`, or allow it under **System Settings
   → Privacy & Security**. Do that only for a binary whose checksum you verified.
-- **Windows SmartScreen** shows *"Windows protected your PC"*. **More info → Run
+- **Windows SmartScreen** shows _"Windows protected your PC"_. **More info → Run
   anyway**, again only after checking the checksum.
 
 If you would rather not accept an unnotarized binary, build from source — the next
@@ -609,13 +615,13 @@ On Windows that is `C:\\Users\\you\\bin\\vireo-mcp.exe`.
 
 ### Common flags in `args`
 
-| Need                                 | `args`                              |
-| ------------------------------------ | ----------------------------------- |
-| local daemon with a dev certificate  | `["-ca", "/abs/path/to/certs/cert.pem"]` |
-| a separate identity per host app     | `["-name", "claude-desktop"]`       |
-| longer timeout for a slow backend    | `["-timeout", "300s"]`              |
-| local daemon, disposable test only   | `["-insecure"]`                     |
-| trace every message for debugging    | `["-log", "/tmp/vireo-mcp.jsonl"]`  |
+| Need                                | `args`                                   |
+| ----------------------------------- | ---------------------------------------- |
+| local daemon with a dev certificate | `["-ca", "/abs/path/to/certs/cert.pem"]` |
+| a separate identity per host app    | `["-name", "claude-desktop"]`            |
+| longer timeout for a slow backend   | `["-timeout", "300s"]`                   |
+| local daemon, disposable test only  | `["-insecure"]`                          |
+| trace every message for debugging   | `["-log", "/tmp/vireo-mcp.jsonl"]`       |
 
 `-version`, `-tools` and `-routes` are one-shot diagnostics and do not belong in a
 host config.
@@ -707,10 +713,10 @@ Linux. Delete the file to start as somebody else. `-name` selects which local
 identity to use, so Claude Desktop and Cursor can be different callers:
 
 ```json
-{"args": ["-name", "claude-desktop"]}
+{ "args": ["-name", "claude-desktop"] }
 ```
 
-**Over HTTP** there is no local file to rely on: the token *is* the identity. It is
+**Over HTTP** there is no local file to rely on: the token _is_ the identity. It is
 bound to a server-generated client id printed at startup. Mint more with:
 
 ```bash
@@ -822,7 +828,7 @@ is not published yet". If the endpoint is up but not in DNS, connect with
 `host:port` — the bridge does not guess a port:
 
 ```json
-{"name": "connect", "arguments": {"host": "agent.example.com:7777"}}
+{ "name": "connect", "arguments": { "host": "agent.example.com:7777" } }
 ```
 
 ### Endpoint connection failures
@@ -866,7 +872,7 @@ Over stdio there is no token and this error cannot occur — stdio identity is t
 local id file.
 
 An **endpoint** rejecting the caller is a different case. `portico/1` as
-implemented carries no API key, so `bad_client_id` means the *client id* was
+implemented carries no API key, so `bad_client_id` means the _client id_ was
 refused (empty, or longer than the daemon accepts). The bridge always mints a valid
 one, so seeing this means `VIREO_MCP_ID` was set to something the daemon will not
 take.
@@ -987,19 +993,19 @@ and how decisions are made
 
 ### Flags
 
-| Flag           | Default   | Meaning                                                                 |
-| -------------- | --------- | ----------------------------------------------------------------------- |
-| `-name`        | `default` | label for this installation — selects the local identity (display only) |
-| `-http-addr`   | —         | serve MCP over Streamable HTTP on this address instead of stdio          |
+| Flag           | Default   | Meaning                                                                     |
+| -------------- | --------- | --------------------------------------------------------------------------- |
+| `-name`        | `default` | label for this installation — selects the local identity (display only)     |
+| `-http-addr`   | —         | serve MCP over Streamable HTTP on this address instead of stdio             |
 | `-ca`          | —         | PEM bundle to trust in addition to the system roots (verification stays on) |
-| `-insecure`    | `false`   | skip daemon TLS verification — unsafe, local development only            |
-| `-timeout`     | `120s`    | per-request timeout toward the daemon                                    |
-| `-issue-token` | —         | mint an authorization token for the HTTP transport and print it          |
-| `-list-tokens` | —         | print the registered tokens and their client ids                         |
-| `-log`         | —         | write a JSON-RPC trace to this file, or `-` for stderr                   |
-| `-tools`       | —         | print the tool catalogue as JSON and exit                                |
-| `-routes`      | —         | print the transport/route table and exit                                 |
-| `-version`     | —         | print name, version, commit and build time, then exit                    |
+| `-insecure`    | `false`   | skip daemon TLS verification — unsafe, local development only               |
+| `-timeout`     | `120s`    | per-request timeout toward the daemon                                       |
+| `-issue-token` | —         | mint an authorization token for the HTTP transport and print it             |
+| `-list-tokens` | —         | print the registered tokens and their client ids                            |
+| `-log`         | —         | write a JSON-RPC trace to this file, or `-` for stderr                      |
+| `-tools`       | —         | print the tool catalogue as JSON and exit                                   |
+| `-routes`      | —         | print the transport/route table and exit                                    |
+| `-version`     | —         | print name, version, commit and build time, then exit                       |
 
 Environment: `VIREO_MCP_ID` overrides the client id; `SSL_CERT_FILE` adds a root
 bundle (it replaces the system roots — prefer `-ca`).
@@ -1008,16 +1014,16 @@ bundle (it replaces the system roots — prefer `-ca`).
 
 From `portico/1` as implemented in the vireo daemon:
 
-| Code               | Means                                                        |
-| ------------------ | ------------------------------------------------------------ |
-| `session_required` | a conversational agent was messaged without a session        |
+| Code               | Means                                                         |
+| ------------------ | ------------------------------------------------------------- |
+| `session_required` | a conversational agent was messaged without a session         |
 | `unknown_session`  | the session id is unknown — restarted daemon, or wrong client |
-| `agent_not_found`  | the agent name is not in the manifest                        |
-| `bad_client_id`    | the daemon refused the client id                             |
-| `upstream_error`   | the backend behind the daemon failed                         |
-| `invalid_frame`    | a protocol violation on the wire                             |
-| `rate_limited`     | a per-client or per-agent limit was exceeded                 |
-| `bad_protocol`     | no acceptable protocol version                               |
+| `agent_not_found`  | the agent name is not in the manifest                         |
+| `bad_client_id`    | the daemon refused the client id                              |
+| `upstream_error`   | the backend behind the daemon failed                          |
+| `invalid_frame`    | a protocol violation on the wire                              |
+| `rate_limited`     | a per-client or per-agent limit was exceeded                  |
+| `bad_protocol`     | no acceptable protocol version                                |
 
 ### Driving it by hand
 

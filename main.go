@@ -40,6 +40,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -54,21 +55,90 @@ const defaultProtocolVersion = "2024-11-05"
 // codeCancelled is the MCP error code for a request the receiver abandoned.
 const codeCancelled = -32800
 
-// Version metadata. version has a default so `go install` and a plain
-// `go build` report something sensible; a release build overrides all three
-// with -ldflags and no other line in the program changes:
+// Version metadata.
+//
+// A release build stamps all three explicitly, and that is authoritative:
 //
 //	go build -ldflags "-X main.version=0.9.0 \
 //	  -X main.buildCommit=$(git rev-parse --short HEAD) \
 //	  -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 //
-// Only the Go toolchain injects these — no generated file, no extra dependency,
-// and a build with no flags still works.
+// A `go install module@v0.9.0` passes no flags, and a plain `go build` passes
+// none either. Rather than fall back to a hardcoded constant that silently goes
+// stale at every release — which is how an install of v0.9.0 came to report
+// "0.8.0" — the empty values below are filled in from Go's own build metadata
+// (runtime/debug.ReadBuildInfo), which the toolchain populates with the module
+// version and the VCS revision. resolveBuildInfo() does that.
 var (
-	version     = "0.8.0" // release builds override this
-	buildCommit = "dev"
-	buildTime   = "unknown"
+	version     = "" // empty: derive from build info
+	buildCommit = "" // empty: derive from build info
+	buildTime   = "" // empty: derive from build info
 )
+
+// serverVersion is what every MCP response and every message reports.
+func serverVersion() string {
+	version, _, _ = resolveBuildInfo()
+	return version
+}
+
+// resolveBuildInfo fills the build stamps that were not set with -ldflags.
+//
+// Precedence is: ldflags first, then `go install module@version` metadata, then
+// the VCS stamp a `go build` inside a repository records, then an honest
+// "dev"/"unknown". Nothing here guesses: an unidentifiable build says so.
+func resolveBuildInfo() (ver, commit, built string) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return buildStamps(version, buildCommit, buildTime, nil)
+	}
+	return buildStamps(version, buildCommit, buildTime, info)
+}
+
+// buildStamps is the whole precedence rule, with its inputs passed in so it can
+// be tested without mutating package state or depending on how the test binary
+// itself was built. A nil info means the toolchain recorded nothing.
+func buildStamps(ldVersion, ldCommit, ldTime string, info *debug.BuildInfo) (ver, commit, built string) {
+	ver, commit, built = ldVersion, ldCommit, ldTime
+
+	if info == nil {
+		return orDefault(ver, "dev"), orDefault(commit, "unknown"), orDefault(built, "unknown")
+	}
+
+	if ver == "" {
+		// `go install module@v0.9.0` sets Main.Version to "v0.9.0", and Go
+		// tags that version themselves. A build from a checkout or a test
+		// binary reports "(devel)", which is not a version and must not be
+		// shown as one.
+		if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+			ver = strings.TrimPrefix(v, "v")
+		}
+	}
+
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if commit == "" && s.Value != "" {
+				commit = s.Value
+				if len(commit) > 7 {
+					commit = commit[:7] // same short form a release stamps
+				}
+			}
+		case "vcs.time":
+			if built == "" && s.Value != "" {
+				built = s.Value
+			}
+		}
+	}
+
+	return orDefault(ver, "dev"), orDefault(commit, "unknown"), orDefault(built, "unknown")
+}
+
+func orDefault(s, fallback string) string {
+	if strings.TrimSpace(s) == "" {
+		return fallback
+	}
+	return s
+}
 
 func main() {
 	label := flag.String("name", "default", "label for this installation, e.g. claude-desktop (display only; the id is generated)")
@@ -88,7 +158,8 @@ func main() {
 	// identity on one line: version, commit, build time. The first two fields
 	// stay machine-readable for scripts (`vireo-mcp -version | cut -d' ' -f2`).
 	if *showVersion {
-		fmt.Printf("%s %s (commit %s, built %s)\n", serverName, version, buildCommit, buildTime)
+		ver, commit, built := resolveBuildInfo()
+		fmt.Printf("%s %s (commit %s, built %s)\n", serverName, ver, commit, built)
 		return
 	}
 	if *showRoutes {
@@ -176,7 +247,7 @@ func main() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "%s %s — MCP client instance %q\n", serverName, version, clientID)
+	fmt.Fprintf(os.Stderr, "%s %s — MCP client instance %q\n", serverName, serverVersion(), clientID)
 
 	if *httpAddr != "" {
 		entry, err := registry.Ensure(*label)
@@ -435,14 +506,14 @@ func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	registered, live := s.callerCount()
 	fmt.Fprintf(w, `{"ok":true,"server":%q,"version":%q,"client_id":%q,"callers_registered":%d,"callers_live":%d}`+"\n",
-		serverName, version, s.baseID, registered, live)
+		serverName, serverVersion(), s.baseID, registered, live)
 }
 
 func (s *server) handleRoutesJSON(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(map[string]any{"server": serverName, "version": version, "routes": routes()})
+	_ = enc.Encode(map[string]any{"server": serverName, "version": serverVersion(), "routes": routes()})
 }
 
 // handleDashboard renders the observable view: what this process answers, and
@@ -472,7 +543,7 @@ func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 <div class="dim">MCP client instance %s</div>
 <h2>What this process answers</h2>
 <table><tr><th>transport</th><th>method</th><th>route</th><th>handler</th><th>notes</th></tr>`,
-		serverName, serverName, version, html.EscapeString(s.baseID))
+		serverName, serverName, serverVersion(), html.EscapeString(s.baseID))
 
 	for _, rt := range routes() {
 		fmt.Fprintf(w, `<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="dim">%s</td></tr>`,
@@ -552,7 +623,7 @@ func (s *server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, ": connected to %s %s\n\n", serverName, version)
+		fmt.Fprintf(w, ": connected to %s %s\n\n", serverName, serverVersion())
 		flusher.Flush()
 		<-r.Context().Done()
 
@@ -642,7 +713,7 @@ func (s *server) dispatch(d *dialer.Dialer, msg rpcMessage) string {
 		return respond(msg.ID, map[string]any{
 			"protocolVersion": negotiateProtocolVersion(msg.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": serverName, "version": version},
+			"serverInfo":      map[string]any{"name": serverName, "version": serverVersion()},
 		})
 
 	case "ping":
@@ -690,8 +761,9 @@ func (s *server) about(d *dialer.Dialer) string {
 	if agent == "" {
 		agent = "-"
 	}
+	ver, commit, built := resolveBuildInfo()
 	return fmt.Sprintf("%s %s\nbuild: %s (%s)\nMCP protocol: %s\ncaller identity: %s\nlabel: %q\ndaemon: %s\ncallers: %d registered, %d live",
-		serverName, version, buildCommit, buildTime, defaultProtocolVersion,
+		serverName, ver, commit, built, defaultProtocolVersion,
 		d.ClientID(), s.name, link, registered, live)
 }
 
